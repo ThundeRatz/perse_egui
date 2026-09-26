@@ -54,7 +54,17 @@ impl RewireIntegration {
     }
 
     pub fn show(&mut self, ui: &mut Ui, frame: &mut Frame) {
-        eframe::App::ui(&mut self.viewer, ui, frame);
+        if ui.available_width() >= 320.0 && ui.available_height() >= 200.0 {
+            eframe::App::ui(&mut self.viewer, ui, frame);
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    egui::RichText::new("Espaço insuficiente para exibir o visualizador central.")
+                        .italics()
+                        .color(egui::Color32::from_gray(140)),
+                );
+            });
+        }
     }
 
     pub fn save(&mut self, storage: &mut dyn eframe::Storage) {
