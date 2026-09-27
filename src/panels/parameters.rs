@@ -240,6 +240,7 @@ pub struct ParametersPanel {
     pub search_active: bool,
     pub search_query: String,
     pub first_frame: bool,
+    pub is_panel_focused: bool,
 }
 
 impl Default for ParametersPanel {
@@ -249,6 +250,7 @@ impl Default for ParametersPanel {
             search_active: false,
             search_query: String::new(),
             first_frame: true,
+            is_panel_focused: false,
         }
     }
 }
@@ -270,9 +272,27 @@ impl ParametersPanel {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, _state: &AppState) {
+    pub fn ui(&mut self, ui: &mut Ui, _state: &AppState, color_hierarchy: bool) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
+
+        let is_hovered = ui.rect_contains_pointer(ui.max_rect());
+        if ui.input(|i| i.pointer.any_pressed()) {
+            self.is_panel_focused = is_hovered;
+        }
+
+        let panel_active = is_hovered || self.is_panel_focused;
+        if panel_active {
+            let ctrl_s_pressed = ui.input_mut(|i| {
+                i.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::S,
+                ))
+            });
+            if ctrl_s_pressed {
+                self.apply_all();
+            }
+        }
 
         let modified_count = self.count_modified();
 
@@ -297,6 +317,7 @@ impl ParametersPanel {
                         &re_ui::icons::CHECKED,
                         &format!("Aplicar ({})", modified_count),
                     )
+                    .on_hover_text("Aplicar alterações de parâmetros (Ctrl+S)")
                     .clicked()
                     {
                         header_action = HeaderAction::Apply;
@@ -324,17 +345,20 @@ impl ParametersPanel {
         // Corpo do painel com a árvore de pacotes, escopos e parâmetros
         Frame::new()
             .inner_margin(Margin {
-                left: 6,
-                right: 6,
-                top: 4,
-                bottom: 4,
+                left: 4,
+                right: 4,
+                top: 2,
+                bottom: 2,
             })
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+
                 egui::ScrollArea::both()
                     .id_salt("parameters_tree_scroll")
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
                         let query = self.search_query.trim().to_lowercase();
 
                         let visible_packages: Vec<&mut PackageParams> = self
@@ -354,7 +378,7 @@ impl ParametersPanel {
                         }
 
                         for pkg in visible_packages {
-                            render_package(ui, pkg, &query, is_first_frame);
+                            render_package(ui, pkg, &query, is_first_frame, color_hierarchy);
                         }
                     });
             });
@@ -362,7 +386,13 @@ impl ParametersPanel {
 }
 
 /// Renderiza um pacote ROS 2 no nível superior
-fn render_package(ui: &mut Ui, pkg: &mut PackageParams, query: &str, is_first_frame: bool) {
+fn render_package(
+    ui: &mut Ui,
+    pkg: &mut PackageParams,
+    query: &str,
+    is_first_frame: bool,
+    color_hierarchy: bool,
+) {
     let mod_count = pkg.count_modified();
     let title = if mod_count > 0 {
         format!("📦 {} (*{})", pkg.name, mod_count)
@@ -376,14 +406,21 @@ fn render_package(ui: &mut Ui, pkg: &mut PackageParams, query: &str, is_first_fr
 
     let open_override = if is_first_frame { Some(true) } else { None };
 
-    egui::CollapsingHeader::new(RichText::new(title).strong().size(13.0))
+    let header_text = if color_hierarchy {
+        RichText::new(title).strong().size(13.0).color(Color32::from_rgb(130, 200, 255))
+    } else {
+        RichText::new(title).strong().size(13.0)
+    };
+
+    egui::CollapsingHeader::new(header_text)
         .id_salt(format!("pkg_collapsing_{}", pkg.name))
         .default_open(true)
         .open(open_override)
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             for file in &mut pkg.files {
                 if force_show_all || file.matches_search(query) {
-                    render_param_file(ui, &pkg.name, file, query, force_show_all, is_first_frame);
+                    render_param_file(ui, &pkg.name, file, query, force_show_all, is_first_frame, color_hierarchy);
                 }
             }
         });
@@ -397,6 +434,7 @@ fn render_param_file(
     query: &str,
     parent_force_all: bool,
     is_first_frame: bool,
+    color_hierarchy: bool,
 ) {
     let mod_count = file.count_modified();
     let title = if mod_count > 0 {
@@ -413,14 +451,21 @@ fn render_param_file(
 
     let open_override = if is_first_frame { Some(true) } else { None };
 
-    egui::CollapsingHeader::new(RichText::new(title).color(Color32::from_gray(200)))
+    let header_text = if color_hierarchy {
+        RichText::new(title).strong().size(12.5).color(Color32::from_rgb(240, 200, 110))
+    } else {
+        RichText::new(title).color(Color32::from_gray(200))
+    };
+
+    egui::CollapsingHeader::new(header_text)
         .id_salt(format!("file_collapsing_{}", path_prefix))
         .default_open(true)
         .open(open_override)
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             for scope in &mut file.scopes {
                 if force_show_all || scope.matches_search(query) {
-                    render_scope(ui, &path_prefix, scope, query, 0, force_show_all, is_first_frame);
+                    render_scope(ui, &path_prefix, scope, query, 0, force_show_all, is_first_frame, color_hierarchy);
                 }
             }
         });
@@ -435,6 +480,7 @@ fn render_scope(
     depth: usize,
     parent_force_all: bool,
     is_first_frame: bool,
+    color_hierarchy: bool,
 ) {
     // Se o escopo atual não tiver parâmetros próprios E tiver exatamente 1 sub-escopo,
     // comprime a cadeia em um único caminho visual (ex: "nav/params/planner")
@@ -462,11 +508,18 @@ fn render_scope(
 
     let open_override = if is_first_frame { Some(true) } else { None };
 
-    egui::CollapsingHeader::new(RichText::new(title).size(12.5))
+    let header_text = if color_hierarchy {
+        RichText::new(title).strong().size(12.0).color(Color32::from_rgb(195, 160, 245))
+    } else {
+        RichText::new(title).size(12.5)
+    };
+
+    egui::CollapsingHeader::new(header_text)
         .id_salt(format!("scope_collapsing_{}", current_path))
         .default_open(true)
         .open(open_override)
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             // Renderiza sub-escopos do escopo comprimido recursivamente
             for sub in &mut current_scope.sub_scopes {
                 if force_show_all || sub.matches_search(query) {
@@ -478,6 +531,7 @@ fn render_scope(
                         depth + 1,
                         force_show_all,
                         is_first_frame,
+                        color_hierarchy,
                     );
                 }
             }
@@ -489,17 +543,17 @@ fn render_scope(
                     || param.name.to_lowercase().contains(query)
                     || param.description.to_lowercase().contains(query)
                 {
-                    render_parameter_row(ui, param);
+                    render_parameter_row(ui, param, color_hierarchy);
                 }
             }
         });
 }
 
 /// Renderiza a linha de um único parâmetro com controle específico para seu tipo de dado e destaque de estado não salvo
-fn render_parameter_row(ui: &mut Ui, param: &mut Parameter) {
+fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: bool) {
     let param_name = param.name.clone();
     ui.push_id(&param_name, |ui| {
-        ui.add_space(2.0);
+        ui.add_space(0.5);
 
         let is_modified = param.is_modified();
 
@@ -516,14 +570,22 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter) {
             egui::Stroke::NONE
         };
 
+        let name_color = if is_modified {
+            Color32::from_rgb(255, 210, 100)
+        } else if color_hierarchy {
+            Color32::from_rgb(175, 235, 195)
+        } else {
+            Color32::from_gray(220)
+        };
+
         Frame::new()
             .fill(frame_bg)
             .stroke(stroke)
             .inner_margin(Margin {
                 left: 4,
                 right: 4,
-                top: 2,
-                bottom: 2,
+                top: 1,
+                bottom: 1,
             })
             .corner_radius(3.0)
             .show(ui, |ui| {
@@ -532,24 +594,17 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter) {
                     ui.label(
                         RichText::new(&param.name)
                             .strong()
-                            .size(12.0)
-                            .color(if is_modified {
-                                Color32::from_rgb(255, 210, 100)
-                            } else {
-                                Color32::from_gray(220)
-                            }),
+                            .size(11.5)
+                            .color(name_color),
                     );
 
                     ui.label(
                         RichText::new(format!("[{}]", param.edited_value.type_name()))
-                            .size(10.0)
+                            .size(9.5)
                             .color(Color32::from_gray(130)),
                     );
 
                     // Controle de entrada específico para o tipo de dado.
-                    // IMPORTANTE: Em layout right_to_left, renderizar render_value_input PRIMEIRO garante
-                    // que ele seja sempre o primeiro widget do layout (#0), mantendo seu Id estável
-                    // mesmo quando o estado is_modified transiciona entre true e false durante um drag.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         render_value_input(ui, param);
 
@@ -570,9 +625,9 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter) {
                 if !param.description.is_empty() {
                     ui.label(
                         RichText::new(&param.description)
-                            .size(10.0)
+                            .size(9.5)
                             .italics()
-                            .color(Color32::from_gray(140)),
+                            .color(Color32::from_gray(135)),
                     );
                 }
             });
@@ -774,3 +829,28 @@ fn create_mock_parameters() -> Vec<PackageParams> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parameters_panel_apply_all() {
+        let mut panel = ParametersPanel::default();
+        assert_eq!(panel.count_modified(), 0);
+
+        // Modify a parameter value
+        let param = &mut panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
+        param.edited_value = ParameterValue::Float(2.5);
+        assert!(param.is_modified());
+        assert_eq!(panel.count_modified(), 1);
+
+        panel.apply_all();
+        assert_eq!(panel.count_modified(), 0);
+        let param_after = &panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
+        assert_eq!(param_after.saved_value, ParameterValue::Float(2.5));
+    }
+}
+
+
+

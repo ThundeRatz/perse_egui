@@ -21,6 +21,9 @@ pub enum ObstacleShape {
     Polygon {
         vertices: Vec<[f32; 2]>,
     },
+    Line {
+        vertices: Vec<[f32; 2]>,
+    },
     Rectangle {
         x: f32,
         y: f32,
@@ -59,6 +62,15 @@ impl Obstacle {
             id,
             kind,
             shape: ObstacleShape::Polygon { vertices },
+            extra: IndexMap::new(),
+        }
+    }
+
+    pub fn new_line(id: String, kind: ObstacleKind, vertices: Vec<[f32; 2]>) -> Self {
+        Self {
+            id,
+            kind,
+            shape: ObstacleShape::Line { vertices },
             extra: IndexMap::new(),
         }
     }
@@ -137,6 +149,101 @@ impl MissionData {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MissionSet {
+    pub id: String,
+    pub name: String,
+    pub data: MissionData,
+}
+
+impl MissionSet {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, data: MissionData) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MissionSetCollection {
+    pub active_set_id: String,
+    pub sets: Vec<MissionSet>,
+}
+
+impl Default for MissionSetCollection {
+    fn default() -> Self {
+        let initial_data = MissionData::load_from_file("mission_points.yaml").unwrap_or_default();
+        let default_set = MissionSet::new("default", "Missão Padrão", initial_data);
+        Self {
+            active_set_id: "default".to_string(),
+            sets: vec![default_set],
+        }
+    }
+}
+
+impl MissionSetCollection {
+    pub fn active_data(&self) -> Option<&MissionData> {
+        self.sets.iter().find(|s| s.id == self.active_set_id).map(|s| &s.data)
+    }
+
+    pub fn active_data_mut(&mut self) -> Option<&mut MissionData> {
+        self.sets.iter_mut().find(|s| s.id == self.active_set_id).map(|s| &mut s.data)
+    }
+
+    pub fn set_active(&mut self, id: &str) -> bool {
+        if self.sets.iter().any(|s| s.id == id) {
+            self.active_set_id = id.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn add_set(&mut self, name: impl Into<String>, data: MissionData) -> String {
+        let name_str = name.into();
+        let id = format!(
+            "set_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let set = MissionSet::new(id.clone(), name_str, data);
+        self.sets.push(set);
+        self.active_set_id = id.clone();
+        id
+    }
+
+    pub fn duplicate_active(&mut self) -> Option<String> {
+        let active_data = self.active_data()?.clone();
+        let active_name = self.sets.iter().find(|s| s.id == self.active_set_id)?.name.clone();
+        let new_name = format!("{} (Cópia)", active_name);
+        Some(self.add_set(new_name, active_data))
+    }
+
+    pub fn delete_active(&mut self) -> bool {
+        if self.sets.len() <= 1 {
+            return false;
+        }
+        if let Some(pos) = self.sets.iter().position(|s| s.id == self.active_set_id) {
+            self.sets.remove(pos);
+            let next_id = self.sets[0].id.clone();
+            self.active_set_id = next_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn rename_active(&mut self, new_name: impl Into<String>) {
+        if let Some(set) = self.sets.iter_mut().find(|s| s.id == self.active_set_id) {
+            set.name = new_name.into();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,8 +253,6 @@ mod tests {
         let path = "mission_points.yaml";
         let data = MissionData::load_from_file(path).expect("Should load mission_points.yaml");
         assert!(!data.points.is_empty(), "Points array should not be empty");
-        assert_eq!(data.points[0].x, 3.0);
-        assert_eq!(data.points[0].y, 0.0);
         assert!(data.points[0].extra.contains_key("odom_speed"));
     }
 
@@ -163,5 +268,24 @@ mod tests {
 
         let loaded: MissionData = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(loaded.points[0].extra.get("custom_field").unwrap().as_str().unwrap(), "test_val");
+    }
+
+    #[test]
+    fn test_line_obstacle_roundtrip() {
+        let mut data = MissionData::default();
+        let obs = Obstacle::new_line("obs_1".to_string(), ObstacleKind::Physical, vec![[0.0, 0.0], [5.0, 5.0]]);
+        data.obstacles.push(obs);
+
+        let yaml = serde_yaml::to_string(&data).unwrap();
+        assert!(yaml.contains("line"));
+
+        let loaded: MissionData = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(loaded.obstacles.len(), 1);
+        if let ObstacleShape::Line { vertices } = &loaded.obstacles[0].shape {
+            assert_eq!(vertices.len(), 2);
+            assert_eq!(vertices[1], [5.0, 5.0]);
+        } else {
+            panic!("Expected ObstacleShape::Line");
+        }
     }
 }

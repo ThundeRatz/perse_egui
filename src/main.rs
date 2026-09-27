@@ -17,6 +17,10 @@ struct Cli {
     /// Endpoint do relay (`host`, `host:port`, ou `rerun+http://host:port/proxy`)
     #[arg(long, default_value = "127.0.0.1:9876")]
     connect: String,
+
+    /// Caminho customizado para o arquivo de configuração e persistência
+    #[arg(long)]
+    config_path: Option<String>,
 }
 
 #[global_allocator]
@@ -40,7 +44,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eframe::run_native(
             "Perse Egui",
             native_options,
-            Box::new(move |cc| Ok(Box::new(app::MyApp::new(cc, cli.connect.clone())?))),
+            Box::new(move |cc| {
+                Ok(Box::new(app::MyApp::new(
+                    cc,
+                    cli.connect.clone(),
+                    cli.config_path.clone(),
+                )?))
+            }),
         )?;
 
         Ok::<(), Box<dyn std::error::Error>>(())

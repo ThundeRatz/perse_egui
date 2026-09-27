@@ -1,21 +1,111 @@
 use crate::{
-    editor::models::{MissionData, ObstacleKind, ObstacleShape},
+    editor::{
+        canvas::ViewVisibilityOptions,
+        models::{MissionData, MissionSetCollection, ObstacleKind, ObstacleShape},
+    },
     panels::components::simple_section_header,
 };
 use egui::{Color32, Margin, RichText, Ui};
+use egui_file_dialog::FileDialog;
 use indexmap::IndexMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Selection {
-    None,
-    Point(usize),
-    Obstacle(usize),
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Selection {
+    pub points: std::collections::BTreeSet<usize>,
+    pub obstacles: std::collections::BTreeSet<usize>,
+    pub obstacle_vertex: Option<(usize, usize)>,
+}
+
+impl Selection {
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty() && self.obstacles.is_empty() && self.obstacle_vertex.is_none()
+    }
+
+    pub fn clear(&mut self) {
+        self.points.clear();
+        self.obstacles.clear();
+        self.obstacle_vertex = None;
+    }
+
+    pub fn select_single_point(&mut self, idx: usize) {
+        self.clear();
+        self.points.insert(idx);
+    }
+
+    pub fn select_single_obstacle(&mut self, idx: usize) {
+        self.clear();
+        self.obstacles.insert(idx);
+    }
+
+    pub fn select_single_vertex(&mut self, obs_idx: usize, v_idx: usize) {
+        self.clear();
+        self.obstacles.insert(obs_idx);
+        self.obstacle_vertex = Some((obs_idx, v_idx));
+    }
+
+    pub fn contains_point(&self, idx: usize) -> bool {
+        self.points.contains(&idx)
+    }
+
+    pub fn contains_obstacle(&self, idx: usize) -> bool {
+        self.obstacles.contains(&idx)
+    }
+
+    pub fn is_vertex_selected(&self, obs_idx: usize, v_idx: usize) -> bool {
+        self.obstacle_vertex == Some((obs_idx, v_idx))
+    }
+
+    pub fn count(&self) -> usize {
+        self.points.len() + self.obstacles.len()
+    }
+
+    pub fn remove_point_and_adjust(&mut self, idx: usize) {
+        self.points.remove(&idx);
+        let old_points = std::mem::take(&mut self.points);
+        for p in old_points {
+            if p > idx {
+                self.points.insert(p - 1);
+            } else if p < idx {
+                self.points.insert(p);
+            }
+        }
+    }
+
+    pub fn remove_obstacle_and_adjust(&mut self, idx: usize) {
+        self.obstacles.remove(&idx);
+        if let Some((o_idx, _)) = self.obstacle_vertex {
+            if o_idx == idx {
+                self.obstacle_vertex = None;
+            } else if o_idx > idx {
+                self.obstacle_vertex = Some((o_idx - 1, self.obstacle_vertex.unwrap().1));
+            }
+        }
+        let old_obs = std::mem::take(&mut self.obstacles);
+        for o in old_obs {
+            if o > idx {
+                self.obstacles.insert(o - 1);
+            } else if o < idx {
+                self.obstacles.insert(o);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogAction {
+    Load,
+    Save,
 }
 
 pub struct EditorSidebar {
     pub new_param_key: String,
     pub new_param_val: String,
     pub show_add_param_popup: bool,
+    pub file_dialog: FileDialog,
+    pub pending_dialog_action: Option<DialogAction>,
+    pub is_renaming_set: bool,
+    pub rename_input: String,
+    pub pending_overwrite_data: Option<(String, MissionData)>,
 }
 
 impl Default for EditorSidebar {
@@ -24,6 +114,11 @@ impl Default for EditorSidebar {
             new_param_key: String::new(),
             new_param_val: String::new(),
             show_add_param_popup: false,
+            file_dialog: FileDialog::new(),
+            pending_dialog_action: None,
+            is_renaming_set: false,
+            rename_input: String::new(),
+            pending_overwrite_data: None,
         }
     }
 }
@@ -32,34 +127,169 @@ impl EditorSidebar {
     pub fn show(
         &mut self,
         ui: &mut Ui,
-        data: &mut MissionData,
+        sets_guard: &mut MissionSetCollection,
         selection: &mut Selection,
+        view_options: &mut ViewVisibilityOptions,
         file_path: &mut String,
         status_msg: &mut String,
     ) {
+        self.file_dialog.update(ui.ctx());
+
+        if let Some(path) = self.file_dialog.take_picked() {
+            let path_str = path.to_string_lossy().to_string();
+            *file_path = path_str.clone();
+
+            match self.pending_dialog_action {
+                Some(DialogAction::Load) => match MissionData::load_from_file(&path) {
+                    Ok(loaded) => {
+                        self.apply_loaded_data(sets_guard, path_str, loaded, status_msg, selection);
+                    }
+                    Err(e) => {
+                        *status_msg = format!("Erro ao carregar: {}", e);
+                    }
+                },
+                Some(DialogAction::Save) => {
+                    if let Some(data) = sets_guard.active_data() {
+                        match data.save_to_file(&path) {
+                            Ok(_) => {
+                                *status_msg = format!("Arquivo '{}' salvo com sucesso!", path_str);
+                            }
+                            Err(e) => {
+                                *status_msg = format!("Erro ao salvar: {}", e);
+                            }
+                        }
+                    }
+                }
+                None => {}
+            }
+            self.pending_dialog_action = None;
+        }
+
+        // Modal de confirmação para sobrescrever conjunto não-vazio
+        if let Some((path_str, loaded)) = self.pending_overwrite_data.clone() {
+            let mut show_modal = true;
+            egui::Window::new("⚠️ Confirmar Sobrescrita")
+                .id(ui.make_persistent_id("confirm_overwrite_modal"))
+                .open(&mut show_modal)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .collapsible(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label("O conjunto de missão atual não está vazio.");
+                    ui.label("Deseja substituir o conteúdo atual pelo arquivo carregado?");
+                    ui.add_space(4.0);
+                    ui.weak(format!("Arquivo: {}", path_str));
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Confirmar / Sobrescrever").clicked() {
+                            if let Some(data) = sets_guard.active_data_mut() {
+                                *data = loaded;
+                                *status_msg = format!("Conjunto atual substituído por '{}'!", path_str);
+                                selection.clear();
+                            }
+                            self.pending_overwrite_data = None;
+                        }
+
+                        if ui.button("Cancelar").clicked() {
+                            self.pending_overwrite_data = None;
+                        }
+                    });
+                });
+
+            if !show_modal {
+                self.pending_overwrite_data = None;
+            }
+        }
+
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    match selection {
-                        Selection::None => {
-                            simple_section_header(ui, "Propriedades", |_| {});
-                            self.show_global_info(ui, data, file_path, status_msg);
-                        }
-                        Selection::Point(idx) => {
-                            let idx = *idx;
+                    if selection.is_empty() {
+                        simple_section_header(ui, "Propriedades", |_| {});
+                        self.show_global_info(ui, sets_guard, file_path, status_msg, selection);
+                    } else if selection.points.len() == 1 && selection.obstacles.is_empty() {
+                        let idx = *selection.points.iter().next().unwrap();
+                        if let Some(data) = sets_guard.active_data_mut() {
                             if idx < data.points.len() {
-                                self.show_point_properties(ui, data, idx, selection, status_msg);
+                                self.show_point_properties(
+                                    ui,
+                                    data,
+                                    idx,
+                                    selection,
+                                    &mut view_options.visible_param_keys,
+                                    status_msg,
+                                );
                             } else {
-                                *selection = Selection::None;
+                                selection.clear();
                             }
                         }
-                        Selection::Obstacle(idx) => {
-                            let idx = *idx;
+                    } else if selection.obstacles.len() == 1 && selection.points.is_empty() {
+                        let idx = *selection.obstacles.iter().next().unwrap();
+                        if let Some(data) = sets_guard.active_data_mut() {
                             if idx < data.obstacles.len() {
-                                self.show_obstacle_properties(ui, data, idx, selection);
+                                self.show_obstacle_properties(
+                                    ui,
+                                    data,
+                                    idx,
+                                    selection,
+                                    view_options,
+                                );
                             } else {
-                                *selection = Selection::None;
+                                selection.clear();
+                            }
+                        }
+                    } else {
+                        // Seleção Múltipla
+                        simple_section_header(
+                            ui,
+                            &format!(
+                                "Seleção Múltipla ({} marcos, {} obstáculos)",
+                                selection.points.len(),
+                                selection.obstacles.len()
+                            ),
+                            |ui| {
+                                if ui.small_button("❌ Deselecionar Tudo").clicked() {
+                                    selection.clear();
+                                }
+                            },
+                        );
+
+                        // Renderizar propriedades de todos os marcos selecionados
+                        let sel_pts: Vec<usize> = selection.points.iter().copied().collect();
+                        for idx in sel_pts {
+                            if let Some(data) = sets_guard.active_data_mut() {
+                                if idx < data.points.len() {
+                                    self.show_point_properties(
+                                        ui,
+                                        data,
+                                        idx,
+                                        selection,
+                                        &mut view_options.visible_param_keys,
+                                        status_msg,
+                                    );
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                }
+                            }
+                        }
+
+                        // Renderizar propriedades de todos os obstáculos selecionados
+                        let sel_obs: Vec<usize> = selection.obstacles.iter().copied().collect();
+                        for idx in sel_obs {
+                            if let Some(data) = sets_guard.active_data_mut() {
+                                if idx < data.obstacles.len() {
+                                    self.show_obstacle_properties(
+                                        ui,
+                                        data,
+                                        idx,
+                                        selection,
+                                        view_options,
+                                    );
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                }
                             }
                         }
                     }
@@ -67,37 +297,146 @@ impl EditorSidebar {
             });
     }
 
+    fn apply_loaded_data(
+        &mut self,
+        sets_guard: &mut MissionSetCollection,
+        path_str: String,
+        loaded: MissionData,
+        status_msg: &mut String,
+        selection: &mut Selection,
+    ) {
+        let is_non_empty = sets_guard
+            .active_data()
+            .map_or(false, |d| !d.points.is_empty() || !d.obstacles.is_empty());
+
+        if is_non_empty {
+            self.pending_overwrite_data = Some((path_str, loaded));
+        } else {
+            if let Some(data) = sets_guard.active_data_mut() {
+                *data = loaded;
+                *status_msg = format!("Conjunto atual substituído por '{}'!", path_str);
+                selection.clear();
+            }
+        }
+    }
+
     fn show_global_info(
         &mut self,
         ui: &mut Ui,
-        data: &mut MissionData,
+        sets_guard: &mut MissionSetCollection,
         file_path: &mut String,
         status_msg: &mut String,
+        selection: &mut Selection,
     ) {
         pad_content(ui, |ui| {
-            ui.label(RichText::new("Arquivo de Missão").strong());
+            ui.label(RichText::new("Conjunto de Missão").strong());
+
+            let active_name = sets_guard
+                .sets
+                .iter()
+                .find(|s| s.id == sets_guard.active_set_id)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "Padrão".to_string());
+
+            let mut current_id = sets_guard.active_set_id.clone();
+            egui::ComboBox::from_id_salt(ui.make_persistent_id("sidebar_mission_set_select_combo"))
+                .selected_text(&active_name)
+                .show_ui(ui, |ui| {
+                    for s in &sets_guard.sets {
+                        ui.selectable_value(&mut current_id, s.id.clone(), &s.name);
+                    }
+                });
+
+            if current_id != sets_guard.active_set_id {
+                sets_guard.set_active(&current_id);
+                selection.clear();
+            }
+
+            ui.add_space(4.0);
+
+            if self.is_renaming_set {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.rename_input).desired_width(120.0));
+                    if ui.small_button("✓").on_hover_text("Confirmar nome").clicked() {
+                        if !self.rename_input.trim().is_empty() {
+                            sets_guard.rename_active(self.rename_input.trim());
+                        }
+                        self.is_renaming_set = false;
+                    }
+                    if ui.small_button("❌").on_hover_text("Cancelar").clicked() {
+                        self.is_renaming_set = false;
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    if ui.button("➕ Novo").on_hover_text("Criar novo conjunto de pontos e obstáculos").clicked() {
+                        let count = sets_guard.sets.len() + 1;
+                        let new_id = sets_guard.add_set(format!("Missão {}", count), MissionData::default());
+                        sets_guard.set_active(&new_id);
+                        selection.clear();
+                    }
+
+                    if ui.button("📋 Duplicar").on_hover_text("Duplicar o conjunto atual").clicked() {
+                        sets_guard.duplicate_active();
+                        selection.clear();
+                    }
+
+                    if ui.button("✏️ Renomear").on_hover_text("Renomear o conjunto atual").clicked() {
+                        self.rename_input = active_name;
+                        self.is_renaming_set = true;
+                    }
+
+                    let can_delete = sets_guard.sets.len() > 1;
+                    if ui
+                        .add_enabled(can_delete, egui::Button::new("🗑 Excluir"))
+                        .on_hover_text("Excluir o conjunto atual")
+                        .clicked()
+                    {
+                        sets_guard.delete_active();
+                        selection.clear();
+                    }
+                });
+            }
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            ui.label(RichText::new("Arquivo de Missão (YAML)").strong());
             ui.text_edit_singleline(file_path);
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("Carregar").clicked() {
+                if ui.button("📂 Procurar...").clicked() {
+                    self.pending_dialog_action = Some(DialogAction::Load);
+                    self.file_dialog.pick_file();
+                }
+
+                if ui.button("Carregar").on_hover_text("Carregar arquivo e substituir conjunto atual").clicked() {
                     match MissionData::load_from_file(&file_path) {
                         Ok(loaded) => {
-                            *data = loaded;
-                            *status_msg = format!("Arquivo '{}' carregado!", file_path);
+                            self.apply_loaded_data(sets_guard, file_path.clone(), loaded, status_msg, selection);
                         }
                         Err(e) => {
                             *status_msg = format!("Erro ao carregar: {}", e);
                         }
                     }
                 }
+
+                if ui.button("💾 Salvar Como...").clicked() {
+                    self.pending_dialog_action = Some(DialogAction::Save);
+                    self.file_dialog.save_file();
+                }
+
                 if ui.button("Salvar").clicked() {
-                    match data.save_to_file(&file_path) {
-                        Ok(_) => {
-                            *status_msg = format!("Arquivo '{}' salvo!", file_path);
-                        }
-                        Err(e) => {
-                            *status_msg = format!("Erro ao salvar: {}", e);
+                    if let Some(data) = sets_guard.active_data() {
+                        match data.save_to_file(&file_path) {
+                            Ok(_) => {
+                                *status_msg = format!("Arquivo '{}' salvo com sucesso!", file_path);
+                            }
+                            Err(e) => {
+                                *status_msg = format!("Erro ao salvar: {}", e);
+                            }
                         }
                     }
                 }
@@ -109,9 +448,11 @@ impl EditorSidebar {
             }
 
             ui.add_space(12.0);
-            ui.label(RichText::new("Resumo").strong());
-            ui.label(format!("Pontos de missão: {}", data.points.len()));
-            ui.label(format!("Obstáculos definidos: {}", data.obstacles.len()));
+            ui.label(RichText::new("Resumo do Conjunto Ativo").strong());
+            if let Some(data) = sets_guard.active_data() {
+                ui.label(format!("Pontos de missão: {}", data.points.len()));
+                ui.label(format!("Obstáculos definidos: {}", data.obstacles.len()));
+            }
         });
     }
 
@@ -121,81 +462,91 @@ impl EditorSidebar {
         data: &mut MissionData,
         idx: usize,
         selection: &mut Selection,
+        visible_param_keys: &mut std::collections::HashSet<String>,
         status_msg: &mut String,
     ) {
-        // Cabeçalho com o nome do marco (ex: "Marco 4") e botão Deselecionar à direita (largura total)
-        simple_section_header(ui, &format!("Marco {}", idx), |ui| {
-            if ui.small_button("❌ Deselecionar").clicked() {
-                *selection = Selection::None;
+        ui.push_id(("point_props_scope", idx), |ui| {
+            // Cabeçalho com o nome do marco (ex: "Marco 4") e botão Deselecionar à direita (largura total)
+            simple_section_header(ui, &format!("Marco {}", idx), |ui| {
+                if ui.small_button("❌ Deselecionar").clicked() {
+                    selection.points.remove(&idx);
+                }
+            });
+
+            let mut move_up = false;
+            let mut move_down = false;
+            let mut delete_pt = false;
+            let points_len = data.points.len();
+
+            {
+                let pt = &mut data.points[idx];
+
+                // Conteúdo da posição e ações com padding interno em Grid de 2 colunas
+                pad_content(ui, |ui| {
+                    egui::Grid::new("point_core_grid")
+                        .num_columns(2)
+                        .spacing([16.0, 6.0])
+                        .min_col_width(100.0)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("Posição").color(Color32::from_gray(200)));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("X:").color(Color32::from_gray(180)));
+                                ui.add(egui::DragValue::new(&mut pt.x).speed(0.05));
+                                ui.add_space(12.0);
+                                ui.label(RichText::new("Y:").color(Color32::from_gray(180)));
+                                ui.add(egui::DragValue::new(&mut pt.y).speed(0.05));
+                            });
+                            ui.end_row();
+                        });
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if idx > 0 && ui.small_button("⬆ Mover para Cima").clicked() {
+                            move_up = true;
+                        }
+                        if idx + 1 < points_len && ui.small_button("⬇ Mover para Baixo").clicked() {
+                            move_down = true;
+                        }
+                        if ui.small_button("🗑 Excluir Ponto").clicked() {
+                            delete_pt = true;
+                        }
+                    });
+                });
+
+                // Cabeçalho de Parâmetros (largura total)
+                simple_section_header(ui, "Parâmetros", |_| {});
+
+                // Conteúdo dos parâmetros com padding interno
+                pad_content(ui, |ui| {
+                    render_aligned_parameters(
+                        ui,
+                        &mut pt.extra,
+                        visible_param_keys,
+                        &mut self.new_param_key,
+                        &mut self.new_param_val,
+                        &mut self.show_add_param_popup,
+                    );
+                });
+            }
+
+            if move_up {
+                data.points.swap(idx, idx - 1);
+                let has_curr = selection.points.contains(&idx);
+                let has_prev = selection.points.contains(&(idx - 1));
+                if has_curr { selection.points.insert(idx - 1); } else { selection.points.remove(&(idx - 1)); }
+                if has_prev { selection.points.insert(idx); } else { selection.points.remove(&idx); }
+            } else if move_down {
+                data.points.swap(idx, idx + 1);
+                let has_curr = selection.points.contains(&idx);
+                let has_next = selection.points.contains(&(idx + 1));
+                if has_curr { selection.points.insert(idx + 1); } else { selection.points.remove(&(idx + 1)); }
+                if has_next { selection.points.insert(idx); } else { selection.points.remove(&idx); }
+            } else if delete_pt {
+                data.points.remove(idx);
+                selection.remove_point_and_adjust(idx);
+                *status_msg = format!("Marco {} removido.", idx);
             }
         });
-
-        let mut move_up = false;
-        let mut move_down = false;
-        let mut delete_pt = false;
-        let points_len = data.points.len();
-
-        {
-            let pt = &mut data.points[idx];
-
-            // Conteúdo da posição e ações com padding interno em Grid de 2 colunas
-            pad_content(ui, |ui| {
-                egui::Grid::new(ui.id().with("point_core_grid"))
-                    .num_columns(2)
-                    .spacing([16.0, 6.0])
-                    .min_col_width(100.0)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("Posição").color(Color32::from_gray(200)));
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("X:").color(Color32::from_gray(180)));
-                            ui.add(egui::DragValue::new(&mut pt.x).speed(0.05));
-                            ui.add_space(12.0);
-                            ui.label(RichText::new("Y:").color(Color32::from_gray(180)));
-                            ui.add(egui::DragValue::new(&mut pt.y).speed(0.05));
-                        });
-                        ui.end_row();
-                    });
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if idx > 0 && ui.small_button("⬆ Mover para Cima").clicked() {
-                        move_up = true;
-                    }
-                    if idx + 1 < points_len && ui.small_button("⬇ Mover para Baixo").clicked() {
-                        move_down = true;
-                    }
-                    if ui.small_button("🗑 Excluir Ponto").clicked() {
-                        delete_pt = true;
-                    }
-                });
-            });
-
-            // Cabeçalho de Parâmetros (largura total)
-            simple_section_header(ui, "Parâmetros", |_| {});
-
-            // Conteúdo dos parâmetros com padding interno
-            pad_content(ui, |ui| {
-                render_aligned_parameters(
-                    ui,
-                    &mut pt.extra,
-                    &mut self.new_param_key,
-                    &mut self.new_param_val,
-                    &mut self.show_add_param_popup,
-                );
-            });
-        }
-
-        if move_up {
-            data.points.swap(idx, idx - 1);
-            *selection = Selection::Point(idx - 1);
-        } else if move_down {
-            data.points.swap(idx, idx + 1);
-            *selection = Selection::Point(idx + 1);
-        } else if delete_pt {
-            data.points.remove(idx);
-            *selection = Selection::None;
-            *status_msg = format!("Marco {} removido.", idx);
-        }
     }
 
     fn show_obstacle_properties(
@@ -204,148 +555,197 @@ impl EditorSidebar {
         data: &mut MissionData,
         idx: usize,
         selection: &mut Selection,
+        view_options: &mut ViewVisibilityOptions,
     ) {
-        let obs_id = data.obstacles[idx].id.clone();
-        // Cabeçalho com o nome do obstáculo e botão Deselecionar à direita (largura total)
-        simple_section_header(ui, &format!("Obstáculo #{} ({})", idx, obs_id), |ui| {
-            if ui.small_button("❌ Deselecionar").clicked() {
-                *selection = Selection::None;
-            }
-        });
+        ui.push_id(("obstacle_props_scope", idx), |ui| {
+            let obs_id = data.obstacles[idx].id.clone();
+            // Cabeçalho com o nome do obstáculo e botão Deselecionar à direita (largura total)
+            simple_section_header(ui, &format!("Obstáculo #{} ({})", idx, obs_id), |ui| {
+                if ui.small_button("❌ Deselecionar").clicked() {
+                    selection.obstacles.remove(&idx);
+                }
+            });
 
-        let mut delete_obs = false;
-
-        {
-            let obs = &mut data.obstacles[idx];
-
-            pad_content(ui, |ui| {
-                egui::Grid::new(ui.id().with("obstacle_core_grid"))
-                    .num_columns(2)
-                    .spacing([16.0, 6.0])
-                    .min_col_width(100.0)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("ID").color(Color32::from_gray(200)));
-                        ui.text_edit_singleline(&mut obs.id);
-                        ui.end_row();
-
-                        ui.label(RichText::new("Tipo").color(Color32::from_gray(200)));
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut obs.kind, ObstacleKind::Physical, "Físico");
-                            ui.selectable_value(&mut obs.kind, ObstacleKind::Cosmetic, "Cosmético");
+            if view_options.lock_obstacles {
+                pad_content(ui, |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(220, 50, 50, 35))
+                        .corner_radius(4.0)
+                        .inner_margin(Margin::same(6))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(240, 80, 80)))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("🔒 Edição/movimentação de obstáculos está travada (Menu Exibição)")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(255, 160, 160)),
+                            );
                         });
-                        ui.end_row();
+                });
+            }
 
-                        match &mut obs.shape {
-                            ObstacleShape::Polygon { vertices } => {
-                                ui.label(RichText::new("Formato").color(Color32::from_gray(200)));
-                                ui.label(format!("Polígono ({} vértices)", vertices.len()));
-                                ui.end_row();
+            let mut delete_obs = false;
 
-                                let mut vert_to_remove = None;
-                                let vert_len = vertices.len();
-                                for (i, v) in vertices.iter_mut().enumerate() {
-                                    ui.label(RichText::new(format!("Vértice {}", i)).color(Color32::from_gray(180)));
+            {
+                let obs = &mut data.obstacles[idx];
+
+                pad_content(ui, |ui| {
+                    egui::Grid::new("obstacle_core_grid")
+                        .num_columns(2)
+                        .spacing([16.0, 6.0])
+                        .min_col_width(100.0)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("ID").color(Color32::from_gray(200)));
+                            ui.text_edit_singleline(&mut obs.id);
+                            ui.end_row();
+
+                            ui.label(RichText::new("Tipo").color(Color32::from_gray(200)));
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut obs.kind, ObstacleKind::Physical, "Físico");
+                                ui.selectable_value(&mut obs.kind, ObstacleKind::Cosmetic, "Cosmético");
+                            });
+                            ui.end_row();
+
+                            match &mut obs.shape {
+                                ObstacleShape::Polygon { vertices } => {
+                                    ui.label(RichText::new("Formato").color(Color32::from_gray(200)));
+                                    ui.label(format!("Polígono ({} vértices)", vertices.len()));
+                                    ui.end_row();
+
+                                    let mut vert_to_remove = None;
+                                    let vert_len = vertices.len();
+                                    for (i, v) in vertices.iter_mut().enumerate() {
+                                        ui.label(RichText::new(format!("Vértice {}", i)).color(Color32::from_gray(180)));
+                                        ui.horizontal(|ui| {
+                                            ui.label("X:");
+                                            ui.add(egui::DragValue::new(&mut v[0]).speed(0.05));
+                                            ui.add_space(8.0);
+                                            ui.label("Y:");
+                                            ui.add(egui::DragValue::new(&mut v[1]).speed(0.05));
+                                            if vert_len > 3 && ui.small_button("🗑").clicked() {
+                                                vert_to_remove = Some(i);
+                                            }
+                                        });
+                                        ui.end_row();
+                                    }
+                                    if let Some(vi) = vert_to_remove {
+                                        vertices.remove(vi);
+                                    }
+                                }
+                                ObstacleShape::Line { vertices } => {
+                                    ui.label(RichText::new("Formato").color(Color32::from_gray(200)));
+                                    ui.label(format!("Linhas ({} vértices)", vertices.len()));
+                                    ui.end_row();
+
+                                    let mut vert_to_remove = None;
+                                    let vert_len = vertices.len();
+                                    for (i, v) in vertices.iter_mut().enumerate() {
+                                        ui.label(RichText::new(format!("Vértice {}", i)).color(Color32::from_gray(180)));
+                                        ui.horizontal(|ui| {
+                                            ui.label("X:");
+                                            ui.add(egui::DragValue::new(&mut v[0]).speed(0.05));
+                                            ui.add_space(8.0);
+                                            ui.label("Y:");
+                                            ui.add(egui::DragValue::new(&mut v[1]).speed(0.05));
+                                            if vert_len > 2 && ui.small_button("🗑").clicked() {
+                                                vert_to_remove = Some(i);
+                                            }
+                                        });
+                                        ui.end_row();
+                                    }
+                                    if let Some(vi) = vert_to_remove {
+                                        vertices.remove(vi);
+                                    }
+                                }
+                                ObstacleShape::Rectangle {
+                                    x,
+                                    y,
+                                    width,
+                                    height,
+                                    rotation,
+                                } => {
+                                    ui.label(RichText::new("Posição").color(Color32::from_gray(200)));
                                     ui.horizontal(|ui| {
                                         ui.label("X:");
-                                        ui.add(egui::DragValue::new(&mut v[0]).speed(0.05));
+                                        ui.add(egui::DragValue::new(x).speed(0.05));
                                         ui.add_space(8.0);
                                         ui.label("Y:");
-                                        ui.add(egui::DragValue::new(&mut v[1]).speed(0.05));
-                                        if vert_len > 3 && ui.small_button("🗑").clicked() {
-                                            vert_to_remove = Some(i);
-                                        }
+                                        ui.add(egui::DragValue::new(y).speed(0.05));
+                                    });
+                                    ui.end_row();
+
+                                    ui.label(RichText::new("Dimensões").color(Color32::from_gray(200)));
+                                    ui.horizontal(|ui| {
+                                        ui.label("L:");
+                                        ui.add(egui::DragValue::new(width).speed(0.05).range(0.01..=100.0));
+                                        ui.add_space(8.0);
+                                        ui.label("A:");
+                                        ui.add(egui::DragValue::new(height).speed(0.05).range(0.01..=100.0));
+                                    });
+                                    ui.end_row();
+
+                                    ui.label(RichText::new("Rotação").color(Color32::from_gray(200)));
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::DragValue::new(rotation).speed(0.05));
+                                        ui.label("rad");
                                     });
                                     ui.end_row();
                                 }
-                                if let Some(vi) = vert_to_remove {
-                                    vertices.remove(vi);
+                                ObstacleShape::Circle { center, radius } => {
+                                    ui.label(RichText::new("Centro").color(Color32::from_gray(200)));
+                                    ui.horizontal(|ui| {
+                                        ui.label("X:");
+                                        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+                                        ui.add_space(8.0);
+                                        ui.label("Y:");
+                                        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+                                    });
+                                    ui.end_row();
+
+                                    ui.label(RichText::new("Raio").color(Color32::from_gray(200)));
+                                    ui.add(egui::DragValue::new(radius).speed(0.05).range(0.01..=100.0));
+                                    ui.end_row();
                                 }
                             }
-                            ObstacleShape::Rectangle {
-                                x,
-                                y,
-                                width,
-                                height,
-                                rotation,
-                            } => {
-                                ui.label(RichText::new("Posição").color(Color32::from_gray(200)));
-                                ui.horizontal(|ui| {
-                                    ui.label("X:");
-                                    ui.add(egui::DragValue::new(x).speed(0.05));
-                                    ui.add_space(8.0);
-                                    ui.label("Y:");
-                                    ui.add(egui::DragValue::new(y).speed(0.05));
-                                });
-                                ui.end_row();
+                        });
 
-                                ui.label(RichText::new("Dimensões").color(Color32::from_gray(200)));
-                                ui.horizontal(|ui| {
-                                    ui.label("L:");
-                                    ui.add(egui::DragValue::new(width).speed(0.05).range(0.01..=100.0));
-                                    ui.add_space(8.0);
-                                    ui.label("A:");
-                                    ui.add(egui::DragValue::new(height).speed(0.05).range(0.01..=100.0));
-                                });
-                                ui.end_row();
-
-                                ui.label(RichText::new("Rotação").color(Color32::from_gray(200)));
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::DragValue::new(rotation).speed(0.05));
-                                    ui.label("rad");
-                                });
-                                ui.end_row();
+                    if matches!(obs.shape, ObstacleShape::Polygon { .. } | ObstacleShape::Line { .. }) {
+                        ui.add_space(6.0);
+                        if ui.button("+ Adicionar Vértice").clicked() {
+                            match &mut obs.shape {
+                                ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => {
+                                    let last = vertices.last().cloned().unwrap_or([0.0, 0.0]);
+                                    vertices.push([last[0] + 0.5, last[1] + 0.5]);
+                                }
+                                _ => {}
                             }
-                            ObstacleShape::Circle { center, radius } => {
-                                ui.label(RichText::new("Centro").color(Color32::from_gray(200)));
-                                ui.horizontal(|ui| {
-                                    ui.label("X:");
-                                    ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
-                                    ui.add_space(8.0);
-                                    ui.label("Y:");
-                                    ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
-                                });
-                                ui.end_row();
-
-                                ui.label(RichText::new("Raio").color(Color32::from_gray(200)));
-                                ui.add(egui::DragValue::new(radius).speed(0.05).range(0.01..=100.0));
-                                ui.end_row();
-                            }
-                        }
-                    });
-
-                if matches!(obs.shape, ObstacleShape::Polygon { .. }) {
-                    ui.add_space(6.0);
-                    if ui.button("+ Adicionar Vértice").clicked() {
-                        if let ObstacleShape::Polygon { vertices } = &mut obs.shape {
-                            let last = vertices.last().cloned().unwrap_or([0.0, 0.0]);
-                            vertices.push([last[0] + 0.5, last[1] + 0.5]);
                         }
                     }
-                }
 
-                ui.add_space(8.0);
-                if ui.button("🗑 Excluir Obstáculo").clicked() {
-                    delete_obs = true;
-                }
-            });
+                    ui.add_space(8.0);
+                    if ui.button("🗑 Excluir Obstáculo").clicked() {
+                        delete_obs = true;
+                    }
+                });
 
-            simple_section_header(ui, "Parâmetros", |_| {});
+                simple_section_header(ui, "Parâmetros", |_| {});
 
-            pad_content(ui, |ui| {
-                render_aligned_parameters(
-                    ui,
-                    &mut obs.extra,
-                    &mut self.new_param_key,
-                    &mut self.new_param_val,
-                    &mut self.show_add_param_popup,
-                );
-            });
-        }
+                pad_content(ui, |ui| {
+                    render_aligned_parameters(
+                        ui,
+                        &mut obs.extra,
+                        &mut view_options.visible_param_keys,
+                        &mut self.new_param_key,
+                        &mut self.new_param_val,
+                        &mut self.show_add_param_popup,
+                    );
+                });
+            }
 
-        if delete_obs {
-            data.obstacles.remove(idx);
-            *selection = Selection::None;
-        }
+            if delete_obs {
+                data.obstacles.remove(idx);
+                selection.remove_obstacle_and_adjust(idx);
+            }
+        });
     }
 }
 
@@ -362,10 +762,11 @@ fn pad_content(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
 }
 
 /// Renderiza os parâmetros organizados em colunas perfeitamente alinhadas:
-/// `nome      valor      [botão de excluir no hover no extremo direito]`
+/// `nome      valor      [olho de visibilidade] [botão de excluir]`
 fn render_aligned_parameters(
     ui: &mut Ui,
     extra: &mut IndexMap<String, serde_yaml::Value>,
+    visible_param_keys: &mut std::collections::HashSet<String>,
     new_key: &mut String,
     new_val: &mut String,
     show_popup: &mut bool,
@@ -384,17 +785,49 @@ fn render_aligned_parameters(
                     pos.y >= row_min_y && pos.y <= row_min_y + 24.0
                 });
 
+                let is_visible = visible_param_keys.contains(k);
+
                 // Coluna 1: Nome do parâmetro alinhado à esquerda
                 ui.label(RichText::new(k).color(Color32::from_gray(200)));
 
-                // Coluna 2: Valor do parâmetro (alinhado verticalmente para todas as linhas) + Botão de exclusão à direita
+                // Coluna 2: Valor do parâmetro + Olho (Visibility) e Lixeira no extremo direito
                 ui.horizontal(|ui| {
                     render_dynamic_param_val(ui, v);
 
-                    if is_hovered {
+                    if is_hovered || is_visible {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("🗑").on_hover_text("Remover parâmetro").clicked() {
-                                to_remove = Some(k.clone());
+                            let icon = if is_visible {
+                                &re_ui::icons::VISIBLE
+                            } else {
+                                &re_ui::icons::INVISIBLE
+                            };
+
+                            let tint = if is_visible {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_gray(110)
+                            };
+
+                            let eye_img = icon
+                                .as_image()
+                                .fit_to_exact_size(egui::vec2(13.0, 13.0))
+                                .tint(tint);
+
+                            let eye_btn = ui.add(egui::Button::image(eye_img).fill(Color32::TRANSPARENT))
+                                .on_hover_text("Exibir/ocultar parâmetro no canvas (para todos os marcos)");
+
+                            if eye_btn.clicked() {
+                                if is_visible {
+                                    visible_param_keys.remove(k);
+                                } else {
+                                    visible_param_keys.insert(k.clone());
+                                }
+                            }
+
+                            if is_hovered {
+                                if ui.small_button("🗑").on_hover_text("Remover parâmetro").clicked() {
+                                    to_remove = Some(k.clone());
+                                }
                             }
                         });
                     }

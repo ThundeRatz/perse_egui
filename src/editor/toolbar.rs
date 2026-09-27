@@ -4,6 +4,7 @@ use egui::{CornerRadius, Margin, Ui, Vec2};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeType {
     Polygon,
+    Line,
     Rectangle,
     Circle,
 }
@@ -71,6 +72,7 @@ impl ToolBar {
                         };
                         let s_str = match shape {
                             ShapeType::Polygon => "Polígono",
+                            ShapeType::Line => "Linhas",
                             ShapeType::Rectangle => "Retângulo",
                             ShapeType::Circle => "Círculo",
                         };
@@ -93,6 +95,10 @@ impl ToolBar {
                         *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Polygon);
                         ui.close();
                     }
+                    if ui.button("Físico - Linhas").clicked() {
+                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Line);
+                        ui.close();
+                    }
                     if ui.button("Físico - Retângulo").clicked() {
                         *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Rectangle);
                         ui.close();
@@ -104,6 +110,10 @@ impl ToolBar {
                     ui.separator();
                     if ui.button("Cosmético - Polígono").clicked() {
                         *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Polygon);
+                        ui.close();
+                    }
+                    if ui.button("Cosmético - Linhas").clicked() {
+                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Line);
                         ui.close();
                     }
                     if ui.button("Cosmético - Retângulo").clicked() {
