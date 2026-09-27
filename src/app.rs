@@ -3,6 +3,7 @@ use egui::{Context, Ui};
 
 use crate::{
     config::AppConfig,
+    editor::MissionEditor,
     panels::{
         launchfiles::LaunchfilesPanel, parameters::ParametersPanel, settings::SettingsPanel,
         terminals::TerminalsPanel,
@@ -11,8 +12,22 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    RerunViewer,
+    MissionEditor,
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        Self::RerunViewer
+    }
+}
+
 pub struct MyApp {
     rewire: RewireIntegration,
+    mission_editor: MissionEditor,
+    view_mode: ViewMode,
     config: AppConfig,
     state: AppState,
     parameters_panel: ParametersPanel,
@@ -42,6 +57,9 @@ impl MyApp {
             if let Some(theme) = storage.get_string("perse_egui.theme_preference") {
                 config.theme_preference = theme;
             }
+            if let Some(zs) = storage.get_string("perse_egui.zoom_speed") {
+                config.zoom_speed = zs.parse().unwrap_or(0.04);
+            }
         } else {
             config.endpoint = endpoint;
         }
@@ -50,6 +68,8 @@ impl MyApp {
 
         Ok(Self {
             rewire,
+            mission_editor: MissionEditor::default(),
+            view_mode: ViewMode::default(),
             config,
             state: AppState::default(),
             parameters_panel: ParametersPanel::default(),
@@ -76,6 +96,10 @@ impl App for MyApp {
         storage.set_string(
             "perse_egui.theme_preference",
             self.config.theme_preference.clone(),
+        );
+        storage.set_string(
+            "perse_egui.zoom_speed",
+            self.config.zoom_speed.to_string(),
         );
     }
 
@@ -126,6 +150,25 @@ impl App for MyApp {
                 {
                     self.config.show_right_sidebar = !self.config.show_right_sidebar;
                 }
+
+                ui.separator();
+
+                // Alternância entre Rerun Viewer e Editor 2D de Missão
+                let is_editor = self.view_mode == ViewMode::MissionEditor;
+                if crate::panels::components::re_icon_toggle_button(
+                    ui,
+                    &re_ui::icons::VIEW_2D,
+                    "Editor 2D de Missão",
+                    is_editor,
+                )
+                .clicked()
+                {
+                    self.view_mode = if is_editor {
+                        ViewMode::RerunViewer
+                    } else {
+                        ViewMode::MissionEditor
+                    };
+                }
             });
         });
 
@@ -171,7 +214,14 @@ impl App for MyApp {
         // Modal de configurações
         self.settings_panel.ui(ui.ctx(), &mut self.config);
 
-        // Visualizador Rewire no painel central
-        self.rewire.show(ui, frame);
+        // Exibição central de acordo com o modo selecionado
+        match self.view_mode {
+            ViewMode::RerunViewer => {
+                self.rewire.show(ui, frame);
+            }
+            ViewMode::MissionEditor => {
+                self.mission_editor.ui(ui, self.config.zoom_speed);
+            }
+        }
     }
 }

@@ -37,6 +37,7 @@ impl RewireIntegration {
         views::TopicsView::register(&mut rerun_app)?;
         views::NodesView::register(&mut rerun_app)?;
         views::DiagnosticsView::register(&mut rerun_app)?;
+        crate::editor::space_view::MissionSpaceView::register(&mut rerun_app)?;
 
         rerun_app.add_log_receiver(log_receiver);
         rerun_app.add_log_receiver(control_receiver);

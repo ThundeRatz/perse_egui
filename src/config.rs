@@ -1,9 +1,10 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub endpoint: String,
     pub show_sidebar: bool,
     pub show_right_sidebar: bool,
     pub theme_preference: String,
+    pub zoom_speed: f32,
 }
 
 impl Default for AppConfig {
@@ -13,6 +14,7 @@ impl Default for AppConfig {
             show_sidebar: true,
             show_right_sidebar: true,
             theme_preference: "system".to_string(),
+            zoom_speed: 0.04,
         }
     }
 }

@@ -1,5 +1,6 @@
 mod app;
 mod config;
+pub mod editor;
 mod panels;
 mod rewire_integration;
 mod state;

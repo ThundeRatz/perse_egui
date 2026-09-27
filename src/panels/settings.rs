@@ -24,6 +24,10 @@ impl SettingsPanel {
 
                 ui.add_space(8.0);
                 ui.checkbox(&mut config.show_sidebar, "Exibir barra lateral por padrão");
+
+                ui.add_space(8.0);
+                ui.label("Sensibilidade do Zoom (Editor 2D):");
+                ui.add(egui::Slider::new(&mut config.zoom_speed, 0.01..=0.15).text("Velocidade do Scroll"));
             });
         self.open = open;
     }

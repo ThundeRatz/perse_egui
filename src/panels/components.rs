@@ -82,6 +82,33 @@ pub fn section_header(
         });
 }
 
+/// Cabeçalho simples de seção estilo Rerun (fundo cinza escuro com título e ações alinhadas à direita).
+pub fn simple_section_header(ui: &mut Ui, title: &str, add_buttons: impl FnOnce(&mut Ui)) {
+    let bg_color = Color32::from_gray(32);
+
+    Frame::new()
+        .fill(bg_color)
+        .inner_margin(Margin {
+            left: 8,
+            right: 8,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            ui.set_height(22.0);
+            ui.horizontal_centered(|ui| {
+                ui.label(
+                    RichText::new(title)
+                        .strong()
+                        .size(13.0)
+                        .color(Color32::from_gray(230)),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_buttons);
+            });
+        });
+}
+
 /// Utilitário para renderizar botão simples com ícone do `re_ui::icons`
 pub fn re_icon_button(ui: &mut Ui, icon: &re_ui::Icon, tooltip: &str) -> egui::Response {
     let img = icon.as_image().fit_to_exact_size(egui::vec2(12.0, 12.0));

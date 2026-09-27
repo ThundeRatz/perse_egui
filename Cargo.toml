@@ -13,10 +13,17 @@ re_log = "0.38"
 re_memory = "0.38"
 re_ui = "0.38"
 re_uri = "0.38"
+re_chunk_store = "0.38"
+re_log_types = "0.38"
+re_sdk_types = "0.38"
+re_viewer_context = "0.38"
 re_viewer = { version = "0.38", default-features = false }
 rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+indexmap = { version = "2", features = ["serde"] }
 
 # Otimizações de compilação em desenvolvimento
 [profile.dev]
