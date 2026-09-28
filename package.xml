@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>perse_egui</name>
+  <version>0.1.0</version>
+  <description>GUI de controle e acompanhamento para o robô Perse</description>
+
+  <maintainer email="comp@thunderatz.org">ThundeRatz</maintainer>
+
+  <license>MIT</license>
+
+  <url type="website">https://thunderatz.org/</url>
+  <url type="repository">https://github.com/ThundeRatz/perse_egui</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+
+</package>
