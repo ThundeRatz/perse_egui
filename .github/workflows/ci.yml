@@ -25,7 +25,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -105,7 +105,7 @@ jobs:
         if: ${{ !matrix.use_cross }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
 
       - name: Install Rust target
         uses: dtolnay/rust-toolchain@stable
