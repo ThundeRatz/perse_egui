@@ -3,3 +3,7 @@
 /install
 /log
 mission_sets.json
+web/rewire_viewer.d.ts
+web/rewire_viewer.js
+web/rewire_viewer_bg.wasm
+web/rewire_viewer_bg.wasm.d.ts
