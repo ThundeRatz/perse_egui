@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 
 # Opção para forçar o download dos binários pré-compilados (padrão no robô/Jetson)
 option(PERSE_DOWNLOAD_PREBUILT "Forçar download dos binários pré-compilados do GitHub Releases em vez de compilar" OFF)
+option(PERSE_BUILD_DAEMON_ONLY "Compilar apenas modo headless daemon (--no-default-features)" OFF)
 
 # Verificar se o cargo está disponível no PATH do sistema
 find_program(CARGO_EXECUTABLE cargo)
@@ -29,8 +30,15 @@ if(CARGO_EXECUTABLE AND NOT PERSE_DOWNLOAD_PREBUILT)
     set(CARGO_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/target/release")
     set(PERSE_EGUI_BINARY "${CARGO_OUTPUT_DIR}/perse_egui")
 
+    if(PERSE_BUILD_DAEMON_ONLY)
+        message(STATUS "PERSE_BUILD_DAEMON_ONLY ativado: Compilando com --no-default-features")
+        set(CARGO_EXTRA_ARGS "--no-default-features")
+    else()
+        set(CARGO_EXTRA_ARGS "")
+    endif()
+
     add_custom_target(perse_egui_cargo ALL
-        COMMAND ${CARGO_EXECUTABLE} build --release
+        COMMAND ${CARGO_EXECUTABLE} build --release ${CARGO_EXTRA_ARGS}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Compilando binário perse_egui com Cargo"
     )

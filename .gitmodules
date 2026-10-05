@@ -1,3 +1,4 @@
 [submodule "external/rewire-viewer"]
 	path = external/rewire-viewer
 	url = https://github.com/rewire-run/viewer.git
+	ignore = dirty

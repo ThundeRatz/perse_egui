@@ -7,40 +7,8 @@ use egui::{
     pos2, vec2, Align2, Color32, FontId, Painter, Pos2, Rect, Response, RichText, Sense, Stroke,
     StrokeKind, Ui, Vec2,
 };
-use serde::{Deserialize, Serialize};
 
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ViewVisibilityOptions {
-    pub show_margins: bool,
-    pub show_path_segments: bool,
-    pub show_positive_axes: bool,
-    pub show_negative_axes: bool,
-    pub show_axis_numbers: bool,
-    #[serde(default = "default_true")]
-    pub show_parameter_labels: bool,
-    #[serde(default)]
-    pub lock_obstacles: bool,
-    pub visible_param_keys: std::collections::HashSet<String>,
-}
-
-impl Default for ViewVisibilityOptions {
-    fn default() -> Self {
-        Self {
-            show_margins: true,
-            show_path_segments: true,
-            show_positive_axes: true,
-            show_negative_axes: true,
-            show_axis_numbers: true,
-            show_parameter_labels: true,
-            lock_obstacles: false,
-            visible_param_keys: std::collections::HashSet::new(),
-        }
-    }
-}
+pub use crate::editor::models::ViewVisibilityOptions;
 
 #[derive(Debug, Clone)]
 pub struct CanvasState {

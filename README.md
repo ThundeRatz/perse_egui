@@ -81,15 +81,17 @@ sudo apt update && sudo apt install -y \
     libxcb-xfixes0-dev \
     libxkbcommon-dev \
     libasound2-dev \
-    libfontconfig1-dev
+    libfontconfig1-dev \
+    libudev-dev
 ```
 
 ### Compilação WebAssembly
-Caso deseje gerar os artefatos WebAssembly para o navegador, instale o target `wasm32` e o utilitário `wasm-bindgen-cli`:
+Caso deseje gerar os artefatos WebAssembly otimizados para o navegador, instale o target `wasm32`, o utilitário `wasm-bindgen-cli` e o `wasm-opt`:
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install -f wasm-bindgen-cli
+# wasm-opt é instalado automaticamente pelo script build_web.sh via cargo-binstall caso não esteja presente
 ```
 
 ---
@@ -101,6 +103,7 @@ O projeto inclui um `Makefile` completo para facilitar o fluxo de build, downloa
 ```bash
 make help          # Exibe todos os comandos disponíveis
 make build         # Compila o binário nativo com Cargo
+make build-daemon  # Compila apenas o binário headless daemon (sem GUI nativa, muito rápido)
 make build-web     # Compila os artefatos WebAssembly (web/)
 make all           # Compila nativo + web
 ```
@@ -169,6 +172,13 @@ Caso queira forçar o download mesmo se tiver cargo instalado:
 
 ```bash
 colcon build --packages-select perse_egui --cmake-args -DPERSE_DOWNLOAD_PREBUILT=ON
+source install/setup.bash
+```
+
+Caso prefira compilar no robô apenas a versão headless/daemon (sem GUI nativa, muito mais rápida e leve):
+
+```bash
+colcon build --packages-select perse_egui --cmake-args -DPERSE_BUILD_DAEMON_ONLY=ON
 source install/setup.bash
 ```
 

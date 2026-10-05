@@ -18,7 +18,7 @@ else
     TARGET_ARCH := $(ARCH)
 endif
 
-.PHONY: all build build-web download install install-user daemon run service clean help
+.PHONY: all prepare build build-daemon build-web download install install-user daemon run service clean help
 
 help:
 	@echo "=========================================================================="
@@ -26,7 +26,8 @@ help:
 	@echo "=========================================================================="
 	@echo "Comandos disponíveis:"
 	@echo "  make all          - Compila o binário nativo release e os artefatos web"
-	@echo "  make build        - Compila o binário nativo release com Cargo"
+	@echo "  make build        - Compila o binário nativo release com Cargo (todas as features)"
+	@echo "  make build-daemon - Compila apenas o binário headless daemon (--no-default-features)"
 	@echo "  make build-web    - Compila os artefatos WebAssembly (executa build_web.sh)"
 	@echo "  make download     - Baixa binário pré-compilado ($(TARGET_ARCH)) e pasta web"
 	@echo "                      (ideal para o robô/Jetson sem cargo instalado)"
@@ -38,13 +39,22 @@ help:
 	@echo "  make clean        - Limpa os artefatos compilados"
 	@echo "=========================================================================="
 
-all: build build-web
+prepare:
+	@if [ -f external/rewire-viewer/Cargo.toml ]; then \
+		sed -i 's/features = \["all"\]/default-features = false, features = ["image"]/' external/rewire-viewer/Cargo.toml 2>/dev/null || true; \
+	fi
 
-build:
+all: prepare build build-web
+
+build: prepare
 	@echo "==> Compilando binário nativo com Cargo em modo release..."
 	cargo build --release
 
-build-web:
+build-daemon:
+	@echo "==> Compilando binário headless daemon (sem viewer GUI, leve para robô)..."
+	cargo build --release --no-default-features
+
+build-web: prepare
 	@echo "==> Compilando artefatos WebAssembly..."
 	chmod +x ./build_web.sh
 	./build_web.sh

@@ -1,22 +1,24 @@
+#[cfg(feature = "viewer")]
 pub mod app;
 pub mod config;
 pub mod editor;
 pub mod net;
 pub mod panels;
+#[cfg(feature = "viewer")]
 pub mod rewire_integration;
 pub mod state;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "viewer"))]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "viewer"))]
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct PerseWebHandle {
     runner: eframe::WebRunner,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "viewer"))]
 #[wasm_bindgen]
 impl PerseWebHandle {
     #[wasm_bindgen(constructor)]

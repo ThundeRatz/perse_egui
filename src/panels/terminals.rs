@@ -1,6 +1,8 @@
+#[cfg(feature = "viewer")]
 use egui::{Color32, Frame, Margin, RichText, Ui};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "viewer")]
 use crate::panels::components::{re_icon_button, section_header};
 
 /// Uma aba / processo de terminal
@@ -26,6 +28,7 @@ impl TerminalTab {
 }
 
 /// Painel de Terminais (posicionado na Sidebar Direita Resizable)
+#[cfg(feature = "viewer")]
 #[derive(Debug)]
 pub struct TerminalsPanel {
     pub tabs: Vec<TerminalTab>,
@@ -35,6 +38,7 @@ pub struct TerminalsPanel {
     pub command_input: String,
 }
 
+#[cfg(feature = "viewer")]
 impl Default for TerminalsPanel {
     fn default() -> Self {
         Self {
@@ -47,6 +51,7 @@ impl Default for TerminalsPanel {
     }
 }
 
+#[cfg(feature = "viewer")]
 impl TerminalsPanel {
     pub fn ui(&mut self, ui: &mut Ui, client: Option<&crate::net::client::ControlClient>) {
         // Cabeçalho com modo de busca inline
@@ -271,6 +276,7 @@ impl TerminalsPanel {
 }
 
 /// Formata linhas de log de terminal com destaque por tipo (INFO, WARN, ERROR)
+#[cfg(feature = "viewer")]
 fn render_log_line(ui: &mut Ui, line: &str) {
     let color = if line.contains("[ERROR]") || line.contains("FATAL") || line.contains("Error") {
         Color32::from_rgb(240, 80, 80)
@@ -324,6 +330,7 @@ pub fn create_mock_terminals() -> Vec<TerminalTab> {
     ]
 }
 
+#[cfg(feature = "viewer")]
 fn render_tab_pill(
     ui: &mut Ui,
     title: &str,

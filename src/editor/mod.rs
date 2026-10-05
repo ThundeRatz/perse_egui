@@ -1,14 +1,23 @@
+#[cfg(feature = "viewer")]
 pub mod canvas;
 pub mod models;
+#[cfg(feature = "viewer")]
 pub mod sidebar;
+#[cfg(feature = "viewer")]
 pub mod space_view;
+#[cfg(feature = "viewer")]
 pub mod toolbar;
 
+#[cfg(feature = "viewer")]
 use canvas::{CanvasState, EditorCanvas};
-use models::{MissionData, MissionSetCollection};
+#[cfg(feature = "viewer")]
+use models::MissionData;
+use models::MissionSetCollection;
+#[cfg(feature = "viewer")]
 use sidebar::{EditorSidebar, Selection};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "viewer")]
 use toolbar::{ActiveTool, ToolBar};
 
 static SHARED_MISSION_SETS: OnceLock<Arc<Mutex<MissionSetCollection>>> = OnceLock::new();
@@ -39,6 +48,7 @@ pub fn set_shared_zoom_speed(speed: f32) {
     SHARED_ZOOM_SPEED.store(speed.to_bits(), Ordering::Relaxed);
 }
 
+#[cfg(feature = "viewer")]
 pub struct MissionEditor {
     pub canvas_state: CanvasState,
     pub selection: Selection,
@@ -52,6 +62,7 @@ pub struct MissionEditor {
     pub cached_disk_data: Option<MissionData>,
 }
 
+#[cfg(feature = "viewer")]
 impl Default for MissionEditor {
     fn default() -> Self {
         let file_path = "mission_points.yaml".to_string();
@@ -73,6 +84,7 @@ impl Default for MissionEditor {
     }
 }
 
+#[cfg(feature = "viewer")]
 impl MissionEditor {
     pub fn ui(
         &mut self,
@@ -205,6 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "viewer")]
     fn test_shared_mission_data_across_editor_instances() {
         let _editor1 = MissionEditor::default();
         let _editor2 = MissionEditor::default();

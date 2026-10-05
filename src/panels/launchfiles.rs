@@ -1,7 +1,10 @@
+#[cfg(feature = "viewer")]
 use egui::{Color32, Frame, Margin, RichText, Ui};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "viewer")]
 use crate::panels::components::{re_icon_button, section_header};
+#[cfg(feature = "viewer")]
 use crate::state::AppState;
 
 /// Tipo de arquivo de launch ROS 2
@@ -95,6 +98,7 @@ impl LaunchPackage {
 }
 
 /// Painel de Launchfiles
+#[cfg(feature = "viewer")]
 #[derive(Debug)]
 pub struct LaunchfilesPanel {
     pub packages: Vec<LaunchPackage>,
@@ -103,6 +107,7 @@ pub struct LaunchfilesPanel {
     pub first_frame: bool,
 }
 
+#[cfg(feature = "viewer")]
 impl Default for LaunchfilesPanel {
     fn default() -> Self {
         Self {
@@ -114,6 +119,7 @@ impl Default for LaunchfilesPanel {
     }
 }
 
+#[cfg(feature = "viewer")]
 impl LaunchfilesPanel {
     pub fn ui(
         &mut self,
@@ -171,6 +177,7 @@ impl LaunchfilesPanel {
     }
 }
 
+#[cfg(feature = "viewer")]
 fn render_launch_package(
     ui: &mut Ui,
     pkg: &mut LaunchPackage,
@@ -221,6 +228,7 @@ fn render_launch_package(
         });
 }
 
+#[cfg(feature = "viewer")]
 fn render_launch_file(
     ui: &mut Ui,
     pkg_name: &str,

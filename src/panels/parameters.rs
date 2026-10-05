@@ -1,7 +1,10 @@
+#[cfg(feature = "viewer")]
 use egui::{Color32, Frame, Margin, RichText, Ui};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "viewer")]
 use crate::panels::components::section_header;
+#[cfg(feature = "viewer")]
 use crate::state::AppState;
 
 /// Tipos de dados de parâmetros suportados pelo ROS 2
@@ -233,6 +236,7 @@ impl PackageParams {
 }
 
 /// Painel de Parâmetros
+#[cfg(feature = "viewer")]
 #[derive(Debug)]
 pub struct ParametersPanel {
     pub packages: Vec<PackageParams>,
@@ -242,6 +246,7 @@ pub struct ParametersPanel {
     pub is_panel_focused: bool,
 }
 
+#[cfg(feature = "viewer")]
 impl Default for ParametersPanel {
     fn default() -> Self {
         Self {
@@ -254,6 +259,7 @@ impl Default for ParametersPanel {
     }
 }
 
+#[cfg(feature = "viewer")]
 impl ParametersPanel {
     pub fn count_modified(&self) -> usize {
         self.packages.iter().map(|pkg| pkg.count_modified()).sum()
@@ -450,6 +456,7 @@ impl ParametersPanel {
     }
 }
 
+#[cfg(feature = "viewer")]
 fn preserve_scope_edits(local: &Scope, remote: &mut Scope) {
     for remote_param in &mut remote.parameters {
         if let Some(local_param) = local
@@ -471,6 +478,7 @@ fn preserve_scope_edits(local: &Scope, remote: &mut Scope) {
 }
 
 /// Renderiza um pacote ROS 2 no nível superior
+#[cfg(feature = "viewer")]
 fn render_package(
     ui: &mut Ui,
     pkg: &mut PackageParams,
@@ -523,6 +531,7 @@ fn render_package(
 }
 
 /// Renderiza um arquivo de parâmetros dentro do pacote
+#[cfg(feature = "viewer")]
 fn render_param_file(
     ui: &mut Ui,
     pkg_name: &str,
@@ -580,6 +589,7 @@ fn render_param_file(
 }
 
 /// Renderiza escopos de forma recursiva com suporte a simplificação de caminhos de filho único (ex: nav/params/planner)
+#[cfg(feature = "viewer")]
 fn render_scope(
     ui: &mut Ui,
     path_prefix: &str,
@@ -661,6 +671,7 @@ fn render_scope(
 }
 
 /// Renderiza a linha de um único parâmetro com controle específico para seu tipo de dado e destaque de estado não salvo
+#[cfg(feature = "viewer")]
 fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: bool) {
     let param_name = param.name.clone();
     ui.push_id(&param_name, |ui| {
@@ -745,6 +756,7 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: boo
 }
 
 /// Renderiza o controle de input adequado para o tipo de dado do parâmetro ROS 2
+#[cfg(feature = "viewer")]
 fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
     match &mut param.edited_value {
         ParameterValue::Bool(ref mut val) => {
@@ -1015,11 +1027,12 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
     ]
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "viewer"))]
 mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "viewer")]
     fn test_parameters_panel_apply_all() {
         let mut panel = ParametersPanel::default();
         assert_eq!(panel.count_modified(), 0);

@@ -10,33 +10,55 @@ crate-type = ["cdylib", "rlib"]
 name = "perse_egui"
 path = "src/main.rs"
 
+[features]
+default = ["viewer"]
+viewer = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:re_ui",
+    "dep:re_uri",
+    "dep:re_chunk_store",
+    "dep:re_log_types",
+    "dep:re_sdk_types",
+    "dep:re_viewer_context",
+    "dep:re_viewer",
+    "dep:rewire-viewer",
+    "dep:egui-file-dialog",
+    "dep:mimalloc",
+    "dep:re_memory",
+    "dep:re_crash_handler",
+    "dep:re_grpc_server",
+]
+
 [dependencies]
-eframe = { version = "0.36", features = ["persistence"] }
-egui = "0.36"
-re_log = "0.38"
-re_ui = "0.38"
-re_uri = "0.38"
-re_chunk_store = "0.38"
-re_log_types = "0.38"
-re_sdk_types = "0.38"
-re_viewer_context = "0.38"
-re_viewer = { version = "0.38", default-features = false }
-rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", default-features = false }
+re_log = { version = "0.38", features = ["setup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 indexmap = { version = "2", features = ["serde"] }
-egui-file-dialog = "0.15"
+
+# Opcionais (apenas quando feature viewer estiver ativa)
+eframe = { version = "0.36", features = ["persistence"], optional = true }
+egui = { version = "0.36", optional = true }
+re_ui = { version = "0.38", optional = true }
+re_uri = { version = "0.38", optional = true }
+re_chunk_store = { version = "0.38", optional = true }
+re_log_types = { version = "0.38", optional = true }
+re_sdk_types = { version = "0.38", optional = true }
+re_viewer_context = { version = "0.38", optional = true }
+re_viewer = { version = "0.38", default-features = false, optional = true }
+rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", default-features = false, optional = true }
+egui-file-dialog = { version = "0.15", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", features = ["native"] }
-mimalloc = "0.1"
-re_memory = "0.38"
-re_crash_handler = "0.38"
-re_grpc_server = "0.38"
+rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", features = ["native"], optional = true }
+mimalloc = { version = "0.1", optional = true }
+re_memory = { version = "0.38", optional = true }
+re_crash_handler = { version = "0.38", optional = true }
+re_grpc_server = { version = "0.38", optional = true }
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.26"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite = "0.29"
 futures-util = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
@@ -52,5 +74,15 @@ web-sys = { version = "0.3.77", features = ["HtmlCanvasElement", "Window", "DomE
 [profile.dev]
 debug = 1 # Reduz enormemente o tamanho dos arquivos de símbolos e acelera a linkagem
 
-[profile.dev.package."*"]
-opt-level = 1 # Mantém dependências pesadas pré-otimizadas
+# Otimizar apenas dependências que afetam o desempenho gráfico da UI em modo debug
+[profile.dev.package.wgpu]
+opt-level = 2
+
+[profile.dev.package.egui]
+opt-level = 2
+
+[profile.dev.package.re_renderer]
+opt-level = 2
+
+[profile.dev.package.image]
+opt-level = 2

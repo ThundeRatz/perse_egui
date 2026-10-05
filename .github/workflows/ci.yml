@@ -24,10 +24,14 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Optimize submodule dependencies
+        run: |
+          sed -i 's/features = \["all"\]/default-features = false, features = ["image"]/' external/rewire-viewer/Cargo.toml || true
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev libudev-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,10 +46,14 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check
-        run: cargo check --all-targets
+        run: |
+          cargo check --all-targets
+          cargo check --no-default-features
 
       - name: Test
-        run: cargo test --all-targets
+        run: |
+          cargo test --all-targets
+          cargo test --no-default-features
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features
@@ -59,15 +67,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Optimize submodule dependencies
+        run: |
+          sed -i 's/features = \["all"\]/default-features = false, features = ["image"]/' external/rewire-viewer/Cargo.toml || true
+
       - name: Install Rust & WASM target
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-cli
+      - name: Install wasm-bindgen-cli and wasm-opt
         run: |
           cargo install -f wasm-bindgen-cli --version 0.2.126
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall --no-confirm wasm-opt
 
       - name: Build Web Assets
         run: |
@@ -103,11 +117,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Optimize submodule dependencies
+        run: |
+          sed -i 's/features = \["all"\]/default-features = false, features = ["image"]/' external/rewire-viewer/Cargo.toml || true
+
       - name: Install system dependencies (x86_64)
         if: ${{ !matrix.use_cross }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y clang mold libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev libudev-dev
 
       - name: Install Rust target
         uses: dtolnay/rust-toolchain@stable
@@ -132,10 +150,10 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
           cp target/${{ matrix.target }}/release/perse_egui ${{ matrix.asset_name }}
 
-      - name: Build Binary (Cross aarch64)
+      - name: Build Binary (Cross aarch64 headless daemon)
         if: ${{ matrix.use_cross }}
         run: |
-          cross build --release --target ${{ matrix.target }}
+          cross build --release --target ${{ matrix.target }} --no-default-features
           cp target/${{ matrix.target }}/release/perse_egui ${{ matrix.asset_name }}
 
       - name: Upload Artifact

@@ -1,3 +1,4 @@
+#[cfg(feature = "viewer")]
 use perse_egui::app;
 use perse_egui::net;
 
@@ -7,7 +8,7 @@ use clap::Parser;
 #[command(
     name = "perse_egui",
     version,
-    about = "Aplicação baseada em egui com rewire-viewer incorporado"
+    about = "Aplicação de controle, telemetria e editor de missões do robô Perse"
 )]
 struct Cli {
     /// Endpoint do relay (`host`, `host:port`, ou `rerun+http://host:port/proxy`)
@@ -31,6 +32,7 @@ struct Cli {
     web_dir: Option<String>,
 }
 
+#[cfg(feature = "viewer")]
 #[global_allocator]
 static GLOBAL: re_memory::AccountingAllocator<mimalloc::MiMalloc> =
     re_memory::AccountingAllocator::new(mimalloc::MiMalloc);
@@ -42,33 +44,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
 
-    if cli.daemon {
-        runtime.block_on(async move {
+    #[cfg(feature = "viewer")]
+    let should_run_daemon = cli.daemon;
+
+    #[cfg(not(feature = "viewer"))]
+    let should_run_daemon = true;
+
+    if should_run_daemon {
+        return runtime.block_on(async move {
             re_log::setup_logging();
             net::daemon::run_daemon_server(cli.port, cli.connect, cli.web_dir).await
-        })?;
-        return Ok(());
+        });
     }
 
-    runtime.block_on(async move {
-        re_log::setup_logging();
-        re_crash_handler::install_crash_handlers(re_viewer::build_info());
+    #[cfg(feature = "viewer")]
+    {
+        runtime.block_on(async move {
+            re_log::setup_logging();
+            re_crash_handler::install_crash_handlers(re_viewer::build_info());
 
-        let mut native_options = re_viewer::native::eframe_options(None);
-        native_options.viewport = native_options.viewport.with_app_id("perse_egui");
+            let mut native_options = re_viewer::native::eframe_options(None);
+            native_options.viewport = native_options.viewport.with_app_id("perse_egui");
 
-        eframe::run_native(
-            "Perse Egui",
-            native_options,
-            Box::new(move |cc| {
-                Ok(Box::new(app::MyApp::new(
-                    cc,
-                    cli.connect.clone(),
-                    cli.config_path.clone(),
-                )?))
-            }),
-        )?;
+            eframe::run_native(
+                "Perse Egui",
+                native_options,
+                Box::new(move |cc| {
+                    Ok(Box::new(app::MyApp::new(
+                        cc,
+                        cli.connect.clone(),
+                        cli.config_path.clone(),
+                    )?))
+                }),
+            )?;
 
-        Ok::<(), Box<dyn std::error::Error>>(())
-    })
+            Ok(())
+        })
+    }
+
+    #[cfg(not(feature = "viewer"))]
+    {
+        Ok(())
+    }
 }

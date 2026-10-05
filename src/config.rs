@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::editor::{canvas::ViewVisibilityOptions, models::MissionSetCollection};
+use crate::editor::models::{MissionSetCollection, ViewVisibilityOptions};
 
 fn default_true() -> bool {
     true
