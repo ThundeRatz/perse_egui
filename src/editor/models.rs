@@ -137,15 +137,37 @@ pub struct MissionData {
 
 impl MissionData {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(path)?;
-        let data: MissionData = serde_yaml::from_str(&content)?;
-        Ok(data)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = std::fs::read_to_string(path)?;
+            let data: MissionData = serde_yaml::from_str(&content)?;
+            Ok(data)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Ok(Self::default())
+        }
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
-        let yaml_str = serde_yaml::to_string(self)?;
-        std::fs::write(path, yaml_str)?;
-        Ok(())
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path_ref = path.as_ref();
+            if let Some(parent) = path_ref.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            let yaml_str = serde_yaml::to_string(self)?;
+            std::fs::write(path_ref, yaml_str)?;
+            Ok(())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Ok(())
+        }
     }
 }
 
@@ -202,14 +224,10 @@ impl MissionSetCollection {
     }
 
     pub fn add_set(&mut self, name: impl Into<String>, data: MissionData) -> String {
+        static SET_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let name_str = name.into();
-        let id = format!(
-            "set_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
+        let counter = SET_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!("set_{}_{}", self.sets.len() + 1, counter);
         let set = MissionSet::new(id.clone(), name_str, data);
         self.sets.push(set);
         self.active_set_id = id.clone();
@@ -240,6 +258,40 @@ impl MissionSetCollection {
     pub fn rename_active(&mut self, new_name: impl Into<String>) {
         if let Some(set) = self.sets.iter_mut().find(|s| s.id == self.active_set_id) {
             set.name = new_name.into();
+        }
+    }
+
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = std::fs::read_to_string(path)?;
+            let col: MissionSetCollection = serde_json::from_str(&content)?;
+            Ok(col)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Ok(Self::default())
+        }
+    }
+
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path_ref = path.as_ref();
+            if let Some(parent) = path_ref.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            let json_str = serde_json::to_string_pretty(self)?;
+            std::fs::write(path_ref, json_str)?;
+            Ok(())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Ok(())
         }
     }
 }
@@ -287,5 +339,39 @@ mod tests {
         } else {
             panic!("Expected ObstacleShape::Line");
         }
+    }
+
+    #[test]
+    fn test_mission_set_collection_persistence_roundtrip() {
+        let mut collection = MissionSetCollection::default();
+        let mut data1 = MissionData::default();
+        data1.points.push(MissionPoint::new(1.0, 2.0));
+        data1.points.push(MissionPoint::new(3.0, 4.0));
+
+        let mut data2 = MissionData::default();
+        data2.points.push(MissionPoint::new(10.0, 20.0));
+        data2.obstacles.push(Obstacle::new_circle("obs1".to_string(), ObstacleKind::Physical, [5.0, 5.0], 2.5));
+
+        let id1 = collection.add_set("Rota A", data1);
+        let id2 = collection.add_set("Rota B", data2);
+        collection.set_active(&id2);
+
+        let temp_path = std::env::temp_dir().join("test_mission_collection.json");
+        collection.save_to_file(&temp_path).expect("Should save collection");
+
+        let loaded = MissionSetCollection::load_from_file(&temp_path).expect("Should load collection");
+        assert_eq!(loaded.active_set_id, id2);
+        assert_eq!(loaded.sets.len(), 3); // default + Rota A + Rota B
+
+        let active = loaded.active_data().expect("Should have active data");
+        assert_eq!(active.points.len(), 1);
+        assert_eq!(active.points[0].x, 10.0);
+        assert_eq!(active.obstacles.len(), 1);
+
+        let set_a = loaded.sets.iter().find(|s| s.id == id1).expect("Should find Rota A");
+        assert_eq!(set_a.name, "Rota A");
+        assert_eq!(set_a.data.points.len(), 2);
+
+        let _ = std::fs::remove_file(temp_path);
     }
 }

@@ -1,10 +1,12 @@
 use egui::Context;
+#[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
 
 use crate::config::AppConfig;
 
 pub struct SettingsPanel {
     pub open: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     file_dialog: FileDialog,
 }
 
@@ -12,6 +14,7 @@ impl Default for SettingsPanel {
     fn default() -> Self {
         Self {
             open: false,
+            #[cfg(not(target_arch = "wasm32"))]
             file_dialog: FileDialog::new(),
         }
     }
@@ -19,10 +22,13 @@ impl Default for SettingsPanel {
 
 impl SettingsPanel {
     pub fn ui(&mut self, ctx: &Context, config: &mut AppConfig) {
-        self.file_dialog.update(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.file_dialog.update(ctx);
 
-        if let Some(path) = self.file_dialog.take_picked() {
-            config.custom_config_path = Some(path.to_string_lossy().to_string());
+            if let Some(path) = self.file_dialog.take_picked() {
+                config.custom_config_path = Some(path.to_string_lossy().to_string());
+            }
         }
 
         if !self.open {
@@ -67,6 +73,7 @@ impl SettingsPanel {
                         }
                     }
 
+                    #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("📂 Procurar...").clicked() {
                         self.file_dialog.pick_file();
                     }

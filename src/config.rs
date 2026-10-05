@@ -7,6 +7,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_mission_file_path() -> String {
+    "mission_points.yaml".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     pub endpoint: String,
@@ -15,6 +19,8 @@ pub struct AppConfig {
     pub theme_preference: String,
     pub zoom_speed: f32,
     pub custom_config_path: Option<String>,
+    #[serde(default = "default_mission_file_path")]
+    pub mission_file_path: String,
     #[serde(default)]
     pub canvas_display_options: ViewVisibilityOptions,
     #[serde(default = "default_true")]
@@ -32,6 +38,7 @@ impl Default for AppConfig {
             theme_preference: "system".to_string(),
             zoom_speed: 0.04,
             custom_config_path: None,
+            mission_file_path: default_mission_file_path(),
             canvas_display_options: ViewVisibilityOptions::default(),
             is_display_options_open: true,
             color_parameter_hierarchy: true,
@@ -77,6 +84,7 @@ mod tests {
         assert!(config.show_right_sidebar);
         assert_eq!(config.theme_preference, "system");
         assert_eq!(config.custom_config_path, None);
+        assert_eq!(config.mission_file_path, "mission_points.yaml");
         assert!(config.color_parameter_hierarchy);
     }
 

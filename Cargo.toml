@@ -3,14 +3,17 @@ name = "perse_egui"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "perse_egui"
+path = "src/main.rs"
+
 [dependencies]
-eframe = "0.36"
+eframe = { version = "0.36", features = ["persistence"] }
 egui = "0.36"
-mimalloc = "0.1"
-re_crash_handler = "0.38"
-re_grpc_server = "0.38"
 re_log = "0.38"
-re_memory = "0.38"
 re_ui = "0.38"
 re_uri = "0.38"
 re_chunk_store = "0.38"
@@ -18,14 +21,32 @@ re_log_types = "0.38"
 re_sdk_types = "0.38"
 re_viewer_context = "0.38"
 re_viewer = { version = "0.38", default-features = false }
-rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer" }
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 indexmap = { version = "2", features = ["serde"] }
 egui-file-dialog = "0.15"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rewire-viewer = { package = "rewire-viewer", path = "external/rewire-viewer", features = ["native"] }
+mimalloc = "0.1"
+re_memory = "0.38"
+re_crash_handler = "0.38"
+re_grpc_server = "0.38"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3.77", features = ["HtmlCanvasElement", "Window", "DomException", "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "BinaryType"] }
 
 # Otimizações de compilação em desenvolvimento
 [profile.dev]

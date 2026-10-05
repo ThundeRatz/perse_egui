@@ -1,10 +1,11 @@
 use egui::{Color32, Frame, Margin, RichText, Ui};
+use serde::{Deserialize, Serialize};
 
 use crate::panels::components::{re_icon_button, section_header};
 use crate::state::AppState;
 
 /// Tipo de arquivo de launch ROS 2
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaunchKind {
     Python,
     Xml,
@@ -20,14 +21,14 @@ impl LaunchKind {
 }
 
 /// Status de execução do launch file
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaunchStatus {
     Stopped,
     Running,
 }
 
 /// Estrutura para um arquivo de launch (suporta hierarquia recursiva, ex: XML incluindo outros launchs)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchFile {
     pub name: String,
     pub kind: LaunchKind,
@@ -65,7 +66,7 @@ impl LaunchFile {
 }
 
 /// Pacote que contém launch files
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchPackage {
     pub name: String,
     pub launch_files: Vec<LaunchFile>,
@@ -112,7 +113,7 @@ impl Default for LaunchfilesPanel {
 }
 
 impl LaunchfilesPanel {
-    pub fn ui(&mut self, ui: &mut Ui, state: &mut AppState) {
+    pub fn ui(&mut self, ui: &mut Ui, state: &mut AppState, client: Option<&crate::net::client::ControlClient>) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
 
@@ -156,7 +157,7 @@ impl LaunchfilesPanel {
                         }
 
                         for pkg in visible_packages {
-                            render_launch_package(ui, pkg, &query, state, is_first_frame);
+                            render_launch_package(ui, pkg, &query, state, is_first_frame, client);
                         }
                     });
             });
@@ -169,6 +170,7 @@ fn render_launch_package(
     query: &str,
     state: &mut AppState,
     is_first_frame: bool,
+    client: Option<&crate::net::client::ControlClient>,
 ) {
     let running_count = pkg
         .launch_files
@@ -188,6 +190,8 @@ fn render_launch_package(
 
     let open_override = if is_first_frame { Some(true) } else { None };
 
+    let pkg_name = pkg.name.clone();
+
     egui::CollapsingHeader::new(RichText::new(title).strong().size(13.0))
         .id_salt(format!("launch_pkg_collapsing_{}", pkg.name))
         .default_open(true)
@@ -195,7 +199,7 @@ fn render_launch_package(
         .show(ui, |ui| {
             for file in &mut pkg.launch_files {
                 if force_show_all || file.matches_search(query) {
-                    render_launch_file(ui, file, query, state, force_show_all, is_first_frame);
+                    render_launch_file(ui, &pkg_name, file, query, state, force_show_all, is_first_frame, client);
                 }
             }
         });
@@ -203,11 +207,13 @@ fn render_launch_package(
 
 fn render_launch_file(
     ui: &mut Ui,
+    pkg_name: &str,
     file: &mut LaunchFile,
     query: &str,
     state: &mut AppState,
     parent_force_all: bool,
     is_first_frame: bool,
+    client: Option<&crate::net::client::ControlClient>,
 ) {
     let is_running = file.status == LaunchStatus::Running;
     let has_children = !file.children.is_empty();
@@ -265,16 +271,39 @@ fn render_launch_file(
                         if re_icon_button(ui, &re_ui::icons::PAUSE, "Parar execução").clicked() {
                             file.status = LaunchStatus::Stopped;
                             state.increment_action(&format!("Parou {}", file.name));
+                            if let Some(c) = client {
+                                c.send(crate::net::protocol::ControlMessage::new(
+                                    crate::net::protocol::Domain::Launchfiles,
+                                    "stop",
+                                    serde_json::to_value(crate::net::protocol::LaunchfileActionRequest {
+                                        package: pkg_name.to_string(),
+                                        filename: file.name.clone(),
+                                        action: "stop".to_string(),
+                                    }).unwrap_or_default(),
+                                ));
+                            }
                         }
                     } else {
                         // Botão de Iniciar (Play) usando ícone do re_ui
                         if re_icon_button(ui, &re_ui::icons::PLAY, "Iniciar launch file").clicked() {
                             file.status = LaunchStatus::Running;
                             state.increment_action(&format!("Iniciou {}", file.name));
+                            if let Some(c) = client {
+                                c.send(crate::net::protocol::ControlMessage::new(
+                                    crate::net::protocol::Domain::Launchfiles,
+                                    "start",
+                                    serde_json::to_value(crate::net::protocol::LaunchfileActionRequest {
+                                        package: pkg_name.to_string(),
+                                        filename: file.name.clone(),
+                                        action: "start".to_string(),
+                                    }).unwrap_or_default(),
+                                ));
+                            }
                         }
                     }
                 });
             });
+
 
             if !file.description.is_empty() {
                 ui.label(
@@ -302,11 +331,13 @@ fn render_launch_file(
                         if parent_force_all || child.matches_search(query) {
                             render_launch_file(
                                 ui,
+                                pkg_name,
                                 child,
                                 query,
                                 state,
                                 parent_force_all,
                                 is_first_frame,
+                                client,
                             );
                         }
                     }
@@ -317,7 +348,7 @@ fn render_launch_file(
     ui.add_space(4.0);
 }
 
-fn create_mock_launchfiles() -> Vec<LaunchPackage> {
+pub fn create_mock_launchfiles() -> Vec<LaunchPackage> {
     vec![
         LaunchPackage {
             name: "perse_bringup".into(),

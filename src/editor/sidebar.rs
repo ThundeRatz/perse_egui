@@ -6,7 +6,6 @@ use crate::{
     panels::components::simple_section_header,
 };
 use egui::{Color32, Margin, RichText, Ui};
-use egui_file_dialog::FileDialog;
 use indexmap::IndexMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -92,17 +91,43 @@ impl Selection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DialogAction {
-    Load,
+pub enum RemoteDialogMode {
+    Open,
     Save,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteFileDialogState {
+    pub is_open: bool,
+    pub mode: RemoteDialogMode,
+    pub current_path: String,
+    pub parent_path: Option<String>,
+    pub entries: Vec<crate::net::protocol::RemoteFileEntry>,
+    pub selected_file: Option<String>,
+    pub save_filename: String,
+    pub error_msg: Option<String>,
+}
+
+impl Default for RemoteFileDialogState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            mode: RemoteDialogMode::Open,
+            current_path: ".".to_string(),
+            parent_path: None,
+            entries: Vec::new(),
+            selected_file: None,
+            save_filename: "mission_points.yaml".to_string(),
+            error_msg: None,
+        }
+    }
 }
 
 pub struct EditorSidebar {
     pub new_param_key: String,
     pub new_param_val: String,
     pub show_add_param_popup: bool,
-    pub file_dialog: FileDialog,
-    pub pending_dialog_action: Option<DialogAction>,
+    pub remote_dialog: RemoteFileDialogState,
     pub is_renaming_set: bool,
     pub rename_input: String,
     pub pending_overwrite_data: Option<(String, MissionData)>,
@@ -114,8 +139,7 @@ impl Default for EditorSidebar {
             new_param_key: String::new(),
             new_param_val: String::new(),
             show_add_param_popup: false,
-            file_dialog: FileDialog::new(),
-            pending_dialog_action: None,
+            remote_dialog: RemoteFileDialogState::default(),
             is_renaming_set: false,
             rename_input: String::new(),
             pending_overwrite_data: None,
@@ -124,6 +148,393 @@ impl Default for EditorSidebar {
 }
 
 impl EditorSidebar {
+    pub fn notify_sets_updated(
+        client: Option<&crate::net::client::ControlClient>,
+        sets: &MissionSetCollection,
+        file_path: &str,
+    ) {
+        if let Some(c) = client {
+            if c.is_connected() {
+                c.send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "save_data",
+                    serde_json::to_value(crate::net::protocol::SaveMissionDataRequest {
+                        collection: sets.clone(),
+                        target_path: Some(file_path.to_string()),
+                    }).unwrap_or_default(),
+                ));
+            }
+        }
+    }
+
+    pub fn request_list_files(
+        &mut self,
+        client: Option<&crate::net::client::ControlClient>,
+        path: &str,
+    ) {
+        if let Some(c) = client {
+            if c.is_connected() {
+                c.send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "list_files",
+                    serde_json::to_value(crate::net::protocol::ListFilesRequest {
+                        path: path.to_string(),
+                    }).unwrap_or_default(),
+                ));
+                return;
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let raw_path = if path.trim().is_empty() || path == "." {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            let target = raw_path.canonicalize().unwrap_or(raw_path);
+
+            match std::fs::read_dir(&target) {
+                Ok(read_dir) => {
+                    let mut entries = Vec::new();
+                    for entry in read_dir.flatten() {
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
+                        if is_dir || name.ends_with(".yaml") || name.ends_with(".yml") {
+                            entries.push(crate::net::protocol::RemoteFileEntry { name, is_dir, size });
+                        }
+                    }
+
+                    entries.sort_by(|a, b| {
+                        match (a.is_dir, b.is_dir) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                        }
+                    });
+
+                    self.remote_dialog.current_path = target.to_string_lossy().to_string();
+                    self.remote_dialog.parent_path = target.parent().map(|p| p.to_string_lossy().to_string());
+                    self.remote_dialog.entries = entries;
+                    self.remote_dialog.error_msg = None;
+                }
+                Err(e) => {
+                    self.remote_dialog.error_msg = Some(format!("Erro ao acessar diretório local: {}", e));
+                }
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.remote_dialog.error_msg = Some("Host desconectado. Conecte ao robô para navegar no sistema de arquivos.".to_string());
+        }
+    }
+
+    pub fn execute_load(
+        &mut self,
+        client: Option<&crate::net::client::ControlClient>,
+        sets_guard: &mut MissionSetCollection,
+        path: &str,
+        status_msg: &mut String,
+        selection: &mut Selection,
+        file_path: &str,
+    ) {
+        if let Some(c) = client {
+            if c.is_connected() {
+                c.send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "load_file",
+                    serde_json::to_value(crate::net::protocol::LoadMissionFileRequest {
+                        path: path.to_string(),
+                    }).unwrap_or_default(),
+                ));
+                *status_msg = format!("Requisitado carregamento de '{}' ao host...", path);
+                return;
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match MissionData::load_from_file(path) {
+                Ok(loaded) => {
+                    self.apply_loaded_data(sets_guard, path.to_string(), loaded, status_msg, selection, client, file_path);
+                }
+                Err(e) => {
+                    *status_msg = format!("Erro ao carregar: {}", e);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (sets_guard, selection, file_path);
+            *status_msg = "Host desconectado. Conecte ao robô para carregar o arquivo.".to_string();
+        }
+    }
+
+    pub fn execute_save(
+        &mut self,
+        client: Option<&crate::net::client::ControlClient>,
+        sets_guard: &mut MissionSetCollection,
+        path: &str,
+        status_msg: &mut String,
+    ) {
+        let Some(data) = sets_guard.active_data() else { return; };
+
+        if let Some(c) = client {
+            if c.is_connected() {
+                c.send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "save_file",
+                    serde_json::to_value(crate::net::protocol::SaveMissionFileRequest {
+                        path: path.to_string(),
+                        data: data.clone(),
+                    }).unwrap_or_default(),
+                ));
+                c.send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "save_data",
+                    serde_json::to_value(crate::net::protocol::SaveMissionDataRequest {
+                        collection: sets_guard.clone(),
+                        target_path: Some(path.to_string()),
+                    }).unwrap_or_default(),
+                ));
+                *status_msg = format!("Salvando '{}' no host...", path);
+                return;
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match data.save_to_file(path) {
+                Ok(_) => {
+                    let _ = sets_guard.save_to_file("mission_sets.json");
+                    *status_msg = format!("Arquivo '{}' salvo com sucesso!", path);
+                }
+                Err(e) => {
+                    *status_msg = format!("Erro ao salvar: {}", e);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            *status_msg = "Host desconectado. Conecte ao robô para salvar o arquivo.".to_string();
+        }
+    }
+
+    fn show_remote_file_dialog(
+        &mut self,
+        ui: &mut Ui,
+        client: Option<&crate::net::client::ControlClient>,
+        sets_guard: &mut MissionSetCollection,
+        file_path: &mut String,
+        status_msg: &mut String,
+        selection: &mut Selection,
+    ) {
+        if !self.remote_dialog.is_open {
+            return;
+        }
+
+        let mut is_open = self.remote_dialog.is_open;
+        let title = match self.remote_dialog.mode {
+            RemoteDialogMode::Open => "📂 Explorador Remoto de Arquivos (Host) - Abrir",
+            RemoteDialogMode::Save => "💾 Explorador Remoto de Arquivos (Host) - Salvar Como...",
+        };
+
+        egui::Window::new(title)
+            .id(ui.make_persistent_id("remote_file_dialog_window"))
+            .open(&mut is_open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_size(egui::vec2(540.0, 420.0))
+            .resizable(true)
+            .collapsible(false)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Caminho no Host:").strong());
+                    let has_parent = self.remote_dialog.parent_path.is_some();
+                    if ui.add_enabled(has_parent, egui::Button::new("⬆ Subir")).clicked() {
+                        if let Some(parent) = self.remote_dialog.parent_path.clone() {
+                            self.request_list_files(client, &parent);
+                        }
+                    }
+                    if ui.button("🔄 Atualizar").clicked() {
+                        let cur = self.remote_dialog.current_path.clone();
+                        self.request_list_files(client, &cur);
+                    }
+                });
+
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.remote_dialog.current_path)
+                        .desired_width(ui.available_width())
+                        .interactive(false),
+                );
+
+                ui.add_space(4.0);
+                ui.separator();
+
+                if let Some(ref err) = self.remote_dialog.error_msg {
+                    ui.colored_label(Color32::from_rgb(250, 100, 100), err);
+                }
+
+                let scroll_height = if self.remote_dialog.mode == RemoteDialogMode::Save {
+                    ui.available_height() - 75.0
+                } else {
+                    ui.available_height() - 45.0
+                };
+
+                let mut dir_to_open = None;
+                let mut file_to_select = None;
+                let mut double_click_open_file = None;
+
+                egui::ScrollArea::vertical()
+                    .max_height(scroll_height.max(140.0))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.remote_dialog.entries.is_empty() {
+                            ui.weak("Nenhum arquivo ou pasta encontrado neste diretório.");
+                        } else {
+                            for entry in &self.remote_dialog.entries {
+                                let is_selected = self.remote_dialog.selected_file.as_deref() == Some(&entry.name);
+                                let icon = if entry.is_dir { "📁" } else { "📄" };
+                                let size_info = if entry.is_dir {
+                                    "<DIR>".to_string()
+                                } else if entry.size < 1024 {
+                                    format!("{} B", entry.size)
+                                } else if entry.size < 1024 * 1024 {
+                                    format!("{:.1} KB", entry.size as f64 / 1024.0)
+                                } else {
+                                    format!("{:.1} MB", entry.size as f64 / (1024.0 * 1024.0))
+                                };
+
+                                let row_text = format!("{}  {} ({})", icon, entry.name, size_info);
+                                let response = ui.selectable_label(is_selected, row_text);
+
+                                if response.clicked() {
+                                    if entry.is_dir {
+                                        dir_to_open = Some(entry.name.clone());
+                                    } else {
+                                        file_to_select = Some(entry.name.clone());
+                                    }
+                                }
+                                if response.double_clicked() {
+                                    if entry.is_dir {
+                                        dir_to_open = Some(entry.name.clone());
+                                    } else {
+                                        double_click_open_file = Some(entry.name.clone());
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                if let Some(folder_name) = dir_to_open {
+                    let current = &self.remote_dialog.current_path;
+                    let new_path = if current == "/" || current.ends_with('/') || current.ends_with('\\') {
+                        format!("{}{}", current, folder_name)
+                    } else {
+                        format!("{}/{}", current, folder_name)
+                    };
+                    self.request_list_files(client, &new_path);
+                    self.remote_dialog.selected_file = None;
+                }
+
+                if let Some(file_name) = file_to_select {
+                    self.remote_dialog.selected_file = Some(file_name.clone());
+                    if self.remote_dialog.mode == RemoteDialogMode::Save {
+                        self.remote_dialog.save_filename = file_name;
+                    }
+                }
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                match self.remote_dialog.mode {
+                    RemoteDialogMode::Open => {
+                        let sel_label = self.remote_dialog.selected_file.clone().unwrap_or_else(|| "Nenhum selecionado".to_string());
+                        let can_open = self.remote_dialog.selected_file.is_some() || double_click_open_file.is_some();
+                        let target_to_open = double_click_open_file.or_else(|| self.remote_dialog.selected_file.clone());
+                        let cur_dir = self.remote_dialog.current_path.clone();
+
+                        let mut should_open = false;
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Arquivo:").weak());
+                            ui.label(RichText::new(&sel_label).strong());
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Cancelar").clicked() {
+                                    self.remote_dialog.is_open = false;
+                                }
+
+                                let open_clicked = ui.add_enabled(can_open, egui::Button::new("📂 Abrir")).clicked();
+                                if open_clicked && can_open {
+                                    should_open = true;
+                                }
+                            });
+                        });
+
+                        if should_open {
+                            if let Some(fname) = target_to_open {
+                                let full_path = if cur_dir == "." {
+                                    fname
+                                } else if cur_dir.ends_with('/') || cur_dir.ends_with('\\') {
+                                    format!("{}{}", cur_dir, fname)
+                                } else {
+                                    format!("{}/{}", cur_dir, fname)
+                                };
+
+                                *file_path = full_path.clone();
+                                let cur_fp = file_path.clone();
+                                self.execute_load(client, sets_guard, &full_path, status_msg, selection, &cur_fp);
+                                self.remote_dialog.is_open = false;
+                            }
+                        }
+                    }
+                    RemoteDialogMode::Save => {
+                        let cur_dir = self.remote_dialog.current_path.clone();
+                        let mut should_save = false;
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Nome do arquivo:").weak());
+                            ui.text_edit_singleline(&mut self.remote_dialog.save_filename);
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Cancelar").clicked() {
+                                    self.remote_dialog.is_open = false;
+                                }
+
+                                let can_save = !self.remote_dialog.save_filename.trim().is_empty();
+                                if ui.add_enabled(can_save, egui::Button::new("💾 Salvar")).clicked() {
+                                    should_save = true;
+                                }
+                            });
+                        });
+
+                        if should_save {
+                            let mut fname = self.remote_dialog.save_filename.trim().to_string();
+                            if !fname.ends_with(".yaml") && !fname.ends_with(".yml") {
+                                fname.push_str(".yaml");
+                            }
+                            let full_path = if cur_dir == "." {
+                                fname
+                            } else if cur_dir.ends_with('/') || cur_dir.ends_with('\\') {
+                                format!("{}{}", cur_dir, fname)
+                            } else {
+                                format!("{}/{}", cur_dir, fname)
+                            };
+
+                            *file_path = full_path.clone();
+                            self.execute_save(client, sets_guard, &full_path, status_msg);
+                            self.remote_dialog.is_open = false;
+                        }
+                    }
+                }
+            });
+
+        self.remote_dialog.is_open = is_open;
+    }
+
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -132,38 +543,9 @@ impl EditorSidebar {
         view_options: &mut ViewVisibilityOptions,
         file_path: &mut String,
         status_msg: &mut String,
+        client: Option<&crate::net::client::ControlClient>,
     ) {
-        self.file_dialog.update(ui.ctx());
-
-        if let Some(path) = self.file_dialog.take_picked() {
-            let path_str = path.to_string_lossy().to_string();
-            *file_path = path_str.clone();
-
-            match self.pending_dialog_action {
-                Some(DialogAction::Load) => match MissionData::load_from_file(&path) {
-                    Ok(loaded) => {
-                        self.apply_loaded_data(sets_guard, path_str, loaded, status_msg, selection);
-                    }
-                    Err(e) => {
-                        *status_msg = format!("Erro ao carregar: {}", e);
-                    }
-                },
-                Some(DialogAction::Save) => {
-                    if let Some(data) = sets_guard.active_data() {
-                        match data.save_to_file(&path) {
-                            Ok(_) => {
-                                *status_msg = format!("Arquivo '{}' salvo com sucesso!", path_str);
-                            }
-                            Err(e) => {
-                                *status_msg = format!("Erro ao salvar: {}", e);
-                            }
-                        }
-                    }
-                }
-                None => {}
-            }
-            self.pending_dialog_action = None;
-        }
+        self.show_remote_file_dialog(ui, client, sets_guard, file_path, status_msg, selection);
 
         // Modal de confirmação para sobrescrever conjunto não-vazio
         if let Some((path_str, loaded)) = self.pending_overwrite_data.clone() {
@@ -187,6 +569,7 @@ impl EditorSidebar {
                                 *data = loaded;
                                 *status_msg = format!("Conjunto atual substituído por '{}'!", path_str);
                                 selection.clear();
+                                Self::notify_sets_updated(client, sets_guard, file_path);
                             }
                             self.pending_overwrite_data = None;
                         }
@@ -208,7 +591,7 @@ impl EditorSidebar {
                 ui.vertical(|ui| {
                     if selection.is_empty() {
                         simple_section_header(ui, "Propriedades", |_| {});
-                        self.show_global_info(ui, sets_guard, file_path, status_msg, selection);
+                        self.show_global_info(ui, sets_guard, file_path, status_msg, selection, client);
                     } else if selection.points.len() == 1 && selection.obstacles.is_empty() {
                         let idx = *selection.points.iter().next().unwrap();
                         if let Some(data) = sets_guard.active_data_mut() {
@@ -297,13 +680,15 @@ impl EditorSidebar {
             });
     }
 
-    fn apply_loaded_data(
+    pub fn apply_loaded_data(
         &mut self,
         sets_guard: &mut MissionSetCollection,
         path_str: String,
         loaded: MissionData,
         status_msg: &mut String,
         selection: &mut Selection,
+        client: Option<&crate::net::client::ControlClient>,
+        file_path: &str,
     ) {
         let is_non_empty = sets_guard
             .active_data()
@@ -316,6 +701,7 @@ impl EditorSidebar {
                 *data = loaded;
                 *status_msg = format!("Conjunto atual substituído por '{}'!", path_str);
                 selection.clear();
+                Self::notify_sets_updated(client, sets_guard, file_path);
             }
         }
     }
@@ -327,6 +713,7 @@ impl EditorSidebar {
         file_path: &mut String,
         status_msg: &mut String,
         selection: &mut Selection,
+        client: Option<&crate::net::client::ControlClient>,
     ) {
         pad_content(ui, |ui| {
             ui.label(RichText::new("Conjunto de Missão").strong());
@@ -350,6 +737,7 @@ impl EditorSidebar {
             if current_id != sets_guard.active_set_id {
                 sets_guard.set_active(&current_id);
                 selection.clear();
+                Self::notify_sets_updated(client, sets_guard, file_path);
             }
 
             ui.add_space(4.0);
@@ -360,6 +748,7 @@ impl EditorSidebar {
                     if ui.small_button("✓").on_hover_text("Confirmar nome").clicked() {
                         if !self.rename_input.trim().is_empty() {
                             sets_guard.rename_active(self.rename_input.trim());
+                            Self::notify_sets_updated(client, sets_guard, file_path);
                         }
                         self.is_renaming_set = false;
                     }
@@ -374,11 +763,13 @@ impl EditorSidebar {
                         let new_id = sets_guard.add_set(format!("Missão {}", count), MissionData::default());
                         sets_guard.set_active(&new_id);
                         selection.clear();
+                        Self::notify_sets_updated(client, sets_guard, file_path);
                     }
 
                     if ui.button("📋 Duplicar").on_hover_text("Duplicar o conjunto atual").clicked() {
                         sets_guard.duplicate_active();
                         selection.clear();
+                        Self::notify_sets_updated(client, sets_guard, file_path);
                     }
 
                     if ui.button("✏️ Renomear").on_hover_text("Renomear o conjunto atual").clicked() {
@@ -394,6 +785,7 @@ impl EditorSidebar {
                     {
                         sets_guard.delete_active();
                         selection.clear();
+                        Self::notify_sets_updated(client, sets_guard, file_path);
                     }
                 });
             }
@@ -407,38 +799,14 @@ impl EditorSidebar {
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("📂 Procurar...").clicked() {
-                    self.pending_dialog_action = Some(DialogAction::Load);
-                    self.file_dialog.pick_file();
+                if ui.button("📥 Carregar").on_hover_text("Carregar arquivo e substituir conjunto atual").clicked() {
+                    let cur_path = file_path.clone();
+                    self.execute_load(client, sets_guard, &cur_path, status_msg, selection, file_path);
                 }
 
-                if ui.button("Carregar").on_hover_text("Carregar arquivo e substituir conjunto atual").clicked() {
-                    match MissionData::load_from_file(&file_path) {
-                        Ok(loaded) => {
-                            self.apply_loaded_data(sets_guard, file_path.clone(), loaded, status_msg, selection);
-                        }
-                        Err(e) => {
-                            *status_msg = format!("Erro ao carregar: {}", e);
-                        }
-                    }
-                }
-
-                if ui.button("💾 Salvar Como...").clicked() {
-                    self.pending_dialog_action = Some(DialogAction::Save);
-                    self.file_dialog.save_file();
-                }
-
-                if ui.button("Salvar").clicked() {
-                    if let Some(data) = sets_guard.active_data() {
-                        match data.save_to_file(&file_path) {
-                            Ok(_) => {
-                                *status_msg = format!("Arquivo '{}' salvo com sucesso!", file_path);
-                            }
-                            Err(e) => {
-                                *status_msg = format!("Erro ao salvar: {}", e);
-                            }
-                        }
-                    }
+                if ui.button("💾 Salvar").on_hover_text("Salvar conjunto atual no arquivo especificado").clicked() {
+                    let cur_path = file_path.clone();
+                    self.execute_save(client, sets_guard, &cur_path, status_msg);
                 }
             });
 

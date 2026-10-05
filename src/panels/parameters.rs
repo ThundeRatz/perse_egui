@@ -1,10 +1,11 @@
 use egui::{Color32, Frame, Margin, RichText, Ui};
+use serde::{Deserialize, Serialize};
 
 use crate::panels::components::section_header;
 use crate::state::AppState;
 
 /// Tipos de dados de parâmetros suportados pelo ROS 2
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParameterValue {
     Bool(bool),
     Int(i64),
@@ -34,7 +35,7 @@ impl ParameterValue {
 }
 
 /// Representa um único parâmetro ROS 2
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameter {
     pub name: String,
     pub description: String,
@@ -71,7 +72,7 @@ impl Parameter {
 }
 
 /// Escopo hierárquico (pode conter sub-escopos recursivamente e parâmetros)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scope {
     pub name: String,
     pub sub_scopes: Vec<Scope>,
@@ -148,7 +149,7 @@ impl Scope {
 }
 
 /// Arquivo de parâmetros (.yaml / .yml)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamFile {
     pub filename: String,
     pub scopes: Vec<Scope>,
@@ -191,7 +192,7 @@ impl ParamFile {
 }
 
 /// Pacote ROS 2 (Sem agrupação de workspace, os pacotes são o topo da árvore)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageParams {
     pub name: String,
     pub files: Vec<ParamFile>,
@@ -272,7 +273,35 @@ impl ParametersPanel {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, _state: &AppState, color_hierarchy: bool) {
+    pub fn update_from_remote(&mut self, remote_packages: Vec<PackageParams>) {
+        if self.count_modified() == 0 {
+            self.packages = remote_packages;
+            return;
+        }
+
+        for remote_pkg in remote_packages {
+            if let Some(local_pkg) = self.packages.iter_mut().find(|p| p.name == remote_pkg.name) {
+                for remote_file in remote_pkg.files {
+                    if let Some(local_file) = local_pkg.files.iter_mut().find(|f| f.filename == remote_file.filename) {
+                        for mut remote_scope in remote_file.scopes {
+                            if let Some(local_scope) = local_file.scopes.iter_mut().find(|s| s.name == remote_scope.name) {
+                                preserve_scope_edits(local_scope, &mut remote_scope);
+                                *local_scope = remote_scope;
+                            } else {
+                                local_file.scopes.push(remote_scope);
+                            }
+                        }
+                    } else {
+                        local_pkg.files.push(remote_file);
+                    }
+                }
+            } else {
+                self.packages.push(remote_pkg);
+            }
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut Ui, _state: &AppState, color_hierarchy: bool, client: Option<&crate::net::client::ControlClient>) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
 
@@ -291,6 +320,16 @@ impl ParametersPanel {
             });
             if ctrl_s_pressed {
                 self.apply_all();
+                if let Some(c) = client {
+                    c.send(crate::net::protocol::ControlMessage::new(
+                        crate::net::protocol::Domain::Parameters,
+                        "apply_params",
+                        serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
+                            package: None,
+                            packages: self.packages.clone(),
+                        }).unwrap_or_default(),
+                    ));
+                }
             }
         }
 
@@ -337,7 +376,19 @@ impl ParametersPanel {
         );
 
         match header_action {
-            HeaderAction::Apply => self.apply_all(),
+            HeaderAction::Apply => {
+                self.apply_all();
+                if let Some(c) = client {
+                    c.send(crate::net::protocol::ControlMessage::new(
+                        crate::net::protocol::Domain::Parameters,
+                        "apply_params",
+                        serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
+                            package: None,
+                            packages: self.packages.clone(),
+                        }).unwrap_or_default(),
+                    ));
+                }
+            }
             HeaderAction::Discard => self.discard_all(),
             HeaderAction::None => {}
         }
@@ -382,6 +433,22 @@ impl ParametersPanel {
                         }
                     });
             });
+    }
+}
+
+fn preserve_scope_edits(local: &Scope, remote: &mut Scope) {
+    for remote_param in &mut remote.parameters {
+        if let Some(local_param) = local.parameters.iter().find(|p| p.name == remote_param.name) {
+            if local_param.is_modified() {
+                remote_param.edited_value = local_param.edited_value.clone();
+                remote_param.array_text_buf = local_param.array_text_buf.clone();
+            }
+        }
+    }
+    for remote_sub in &mut remote.sub_scopes {
+        if let Some(local_sub) = local.sub_scopes.iter().find(|s| s.name == remote_sub.name) {
+            preserve_scope_edits(local_sub, remote_sub);
+        }
     }
 }
 
@@ -729,7 +796,7 @@ fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
 }
 
 /// Cria dados mock realistas de pacotes e parâmetros do robô Perse
-fn create_mock_parameters() -> Vec<PackageParams> {
+pub fn create_mock_parameters() -> Vec<PackageParams> {
     vec![
         PackageParams {
             name: "perse_navigation".into(),

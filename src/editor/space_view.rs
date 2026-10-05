@@ -95,7 +95,7 @@ impl ViewClass for MissionSpaceView {
     ) -> Result<ViewClassUiOutput, ViewSystemExecutionError> {
         let state = state.downcast_mut::<MissionSpaceViewState>()?;
         let zoom_speed = crate::editor::get_shared_zoom_speed();
-        state.editor.ui(ui, zoom_speed);
+        state.editor.ui(ui, zoom_speed, None);
         Ok(ViewClassUiOutput::default())
     }
 }

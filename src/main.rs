@@ -1,9 +1,5 @@
-mod app;
-mod config;
-pub mod editor;
-mod panels;
-mod rewire_integration;
-mod state;
+use perse_egui::app;
+use perse_egui::net;
 
 use clap::Parser;
 
@@ -21,6 +17,14 @@ struct Cli {
     /// Caminho customizado para o arquivo de configuração e persistência
     #[arg(long)]
     config_path: Option<String>,
+
+    /// Executar como servidor web daemon (sem abrir janela gráfica nativa)
+    #[arg(long)]
+    daemon: bool,
+
+    /// Porta para o servidor web daemon (padrão: 8080)
+    #[arg(long, default_value = "8080")]
+    port: u16,
 }
 
 #[global_allocator]
@@ -33,6 +37,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+
+    if cli.daemon {
+        runtime.block_on(async move {
+            re_log::setup_logging();
+            net::daemon::run_daemon_server(cli.port, cli.connect).await
+        })?;
+        return Ok(());
+    }
 
     runtime.block_on(async move {
         re_log::setup_logging();

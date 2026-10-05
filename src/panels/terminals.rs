@@ -1,9 +1,10 @@
 use egui::{Color32, Frame, Margin, RichText, Ui};
+use serde::{Deserialize, Serialize};
 
 use crate::panels::components::{re_icon_button, section_header};
 
 /// Uma aba / processo de terminal
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalTab {
     pub id: usize,
     pub title: String,
@@ -47,7 +48,7 @@ impl Default for TerminalsPanel {
 }
 
 impl TerminalsPanel {
-    pub fn ui(&mut self, ui: &mut Ui) {
+    pub fn ui(&mut self, ui: &mut Ui, client: Option<&crate::net::client::ControlClient>) {
         // Cabeçalho com modo de busca inline
         section_header(
             ui,
@@ -57,12 +58,20 @@ impl TerminalsPanel {
             |ui| {
                 if re_icon_button(ui, &re_ui::icons::ADD, "Novo Terminal").clicked() {
                     let next_id = self.tabs.len() + 1;
+                    let title = format!("terminal_{}", next_id);
                     self.tabs.push(TerminalTab::new(
                         next_id,
-                        format!("terminal_{}", next_id),
+                        title.clone(),
                         vec!["[INFO] [bash]: Terminal interativo iniciado."],
                     ));
                     self.active_tab_index = self.tabs.len() - 1;
+                    if let Some(c) = client {
+                        c.send(crate::net::protocol::ControlMessage::new(
+                            crate::net::protocol::Domain::Terminal,
+                            "create",
+                            serde_json::to_value(crate::net::protocol::TerminalCreateRequest { title }).unwrap_or_default(),
+                        ));
+                    }
                 }
             },
         );
@@ -102,9 +111,19 @@ impl TerminalsPanel {
                     }
 
                     if let Some(close_idx) = tab_to_close {
+                        let closed_id = self.tabs[close_idx].id;
                         self.tabs.remove(close_idx);
                         if self.active_tab_index >= self.tabs.len() {
                             self.active_tab_index = self.tabs.len().saturating_sub(1);
+                        }
+                        if let Some(c) = client {
+                            c.send(crate::net::protocol::ControlMessage::new(
+                                crate::net::protocol::Domain::Terminal,
+                                "close",
+                                serde_json::to_value(crate::net::protocol::TerminalCloseRequest {
+                                    terminal_id: closed_id,
+                                }).unwrap_or_default(),
+                            ));
                         }
                     }
                 });
@@ -220,6 +239,17 @@ impl TerminalsPanel {
                             tab.output_lines.push(format!("$ {}", cmd));
                             tab.output_lines.push(format!("[INFO] [exec]: Executando '{}'...", cmd));
                             self.command_input.clear();
+                            if let Some(c) = client {
+                                c.send(crate::net::protocol::ControlMessage::new(
+                                    crate::net::protocol::Domain::Terminal,
+                                    "data",
+                                    serde_json::to_value(crate::net::protocol::TerminalDataMessage {
+                                        terminal_id: tab.id,
+                                        text: cmd,
+                                        is_input: true,
+                                    }).unwrap_or_default(),
+                                ));
+                            }
                         }
                     }
                 });
@@ -244,7 +274,7 @@ fn render_log_line(ui: &mut Ui, line: &str) {
     ui.label(RichText::new(line).monospace().size(11.0).color(color));
 }
 
-fn create_mock_terminals() -> Vec<TerminalTab> {
+pub fn create_mock_terminals() -> Vec<TerminalTab> {
     vec![
         TerminalTab::new(
             1,

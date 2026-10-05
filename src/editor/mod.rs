@@ -49,12 +49,14 @@ pub struct MissionEditor {
     pub status_msg: String,
     pub is_renaming_set: bool,
     pub rename_input: String,
+    pub cached_disk_data: Option<MissionData>,
 }
 
 impl Default for MissionEditor {
     fn default() -> Self {
         let file_path = "mission_points.yaml".to_string();
         let status_msg = format!("Carregado de {}", file_path);
+        let cached_disk_data = MissionData::load_from_file(&file_path).ok();
 
         Self {
             canvas_state: CanvasState::default(),
@@ -66,21 +68,25 @@ impl Default for MissionEditor {
             status_msg,
             is_renaming_set: false,
             rename_input: String::new(),
+            cached_disk_data,
         }
     }
 }
 
 impl MissionEditor {
-    pub fn ui(&mut self, ui: &mut egui::Ui, zoom_speed: f32) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, zoom_speed: f32, client: Option<&crate::net::client::ControlClient>) {
         let panel_bg = ui.visuals().panel_fill;
         let sets_arc = get_shared_mission_sets();
         let mut sets_guard = sets_arc.lock().unwrap_or_else(|e| e.into_inner());
 
-        let default_disk_data = MissionData::load_from_file("mission_points.yaml").unwrap_or_default();
-        let is_different = if let Some(active_data) = sets_guard.active_data() {
-            active_data != &default_disk_data
-        } else {
-            false
+        if self.cached_disk_data.is_none() {
+            self.cached_disk_data = MissionData::load_from_file(&self.file_path).ok();
+        }
+
+        let is_different = match (&self.cached_disk_data, sets_guard.active_data()) {
+            (Some(disk), Some(active)) => active != disk,
+            (None, Some(active)) => !active.points.is_empty() || !active.obstacles.is_empty(),
+            _ => false,
         };
 
         // Tratamento do Atalho Ctrl+S (apenas no editor 2D)
@@ -92,21 +98,13 @@ impl MissionEditor {
         });
 
         if ctrl_s_pressed {
-            if let Some(active_data) = sets_guard.active_data() {
-                let save_target = if self.file_path.trim().is_empty() {
-                    "mission_points.yaml"
-                } else {
-                    &self.file_path
-                };
-                match active_data.save_to_file(save_target) {
-                    Ok(_) => {
-                        self.status_msg = format!("Conjunto salvo em '{}'! (Ctrl+S)", save_target);
-                    }
-                    Err(e) => {
-                        self.status_msg = format!("Erro ao salvar via Ctrl+S: {}", e);
-                    }
-                }
-            }
+            let save_target = if self.file_path.trim().is_empty() {
+                "mission_points.yaml".to_string()
+            } else {
+                self.file_path.clone()
+            };
+            self.sidebar.execute_save(client, &mut sets_guard, &save_target, &mut self.status_msg);
+            self.cached_disk_data = sets_guard.active_data().cloned();
         }
 
         let sidebar_id = ui.make_persistent_id("editor_properties_sidebar");
@@ -124,8 +122,13 @@ impl MissionEditor {
                     &mut self.canvas_state.view_options,
                     &mut self.file_path,
                     &mut self.status_msg,
+                    client,
                 );
             });
+
+        if self.status_msg.contains("salvo com sucesso") || self.status_msg.contains("Salvando") || self.status_msg.contains("substituído por") {
+            self.cached_disk_data = sets_guard.active_data().cloned();
+        }
 
         // Área Central do Canvas 2D
         egui::CentralPanel::default()

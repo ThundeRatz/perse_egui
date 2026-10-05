@@ -2,13 +2,17 @@ use std::error::Error;
 
 use eframe::{CreationContext, Frame};
 use egui::{Context, Ui};
+#[cfg(not(target_arch = "wasm32"))]
 use re_grpc_server::MessageProxyHandle;
-use rewire_viewer::{app::RewireApp, connection::RelayLink, control, views};
+use rewire_viewer::{app::RewireApp, views};
+#[cfg(not(target_arch = "wasm32"))]
+use rewire_viewer::{connection::RelayLink, control};
 
 pub type IntegrationResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub struct RewireIntegration {
     viewer: RewireApp,
+    #[cfg(not(target_arch = "wasm32"))]
     _control_handle: MessageProxyHandle,
 }
 
@@ -17,10 +21,6 @@ impl RewireIntegration {
         let main_thread_token = re_viewer::MainThreadToken::i_promise_i_am_on_the_main_thread();
 
         re_viewer::customize_eframe_and_setup_renderer(cc)?;
-
-        let uri: re_uri::ProxyUri = RelayLink::normalize(endpoint).parse()?;
-        let (link, log_receiver) = RelayLink::open(uri);
-        let (control_handle, control_receiver) = control::spawn();
 
         let mut rerun_app = re_viewer::App::new(
             main_thread_token,
@@ -39,15 +39,54 @@ impl RewireIntegration {
         views::DiagnosticsView::register(&mut rerun_app)?;
         crate::editor::space_view::MissionSpaceView::register(&mut rerun_app)?;
 
-        rerun_app.add_log_receiver(log_receiver);
-        rerun_app.add_log_receiver(control_receiver);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let uri: re_uri::ProxyUri = RelayLink::normalize(endpoint).parse()?;
+            let (link, log_receiver) = RelayLink::open(uri);
+            let (control_handle, control_receiver) = control::spawn();
 
-        let viewer = RewireApp::new(rerun_app, link);
+            rerun_app.add_log_receiver(log_receiver);
+            rerun_app.add_log_receiver(control_receiver);
 
-        Ok(Self {
-            viewer,
-            _control_handle: control_handle,
-        })
+            let viewer = RewireApp::new(rerun_app, link);
+
+            Ok(Self {
+                viewer,
+                _control_handle: control_handle,
+            })
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut url = if endpoint.is_empty() {
+                let host = web_sys::window()
+                    .and_then(|w| w.location().hostname().ok())
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
+                format!("rerun+http://{}:9876/proxy", host)
+            } else if !endpoint.starts_with("rerun+http://")
+                && !endpoint.starts_with("rerun+https://")
+                && !endpoint.starts_with("http://")
+                && !endpoint.starts_with("https://")
+                && !endpoint.starts_with("ws://")
+                && !endpoint.starts_with("wss://")
+            {
+                format!("rerun+http://{}/proxy", endpoint.trim_end_matches('/'))
+            } else {
+                endpoint.to_string()
+            };
+
+            if (url.starts_with("rerun+http://") || url.starts_with("http://")) && !url.ends_with("/proxy") {
+                url = format!("{}/proxy", url.trim_end_matches('/'));
+            }
+
+            if !url.is_empty() {
+                re_log::info!("Opening WASM Rerun URL: {}", url);
+                rerun_app.open_url_or_file(&url);
+            }
+
+            let viewer = RewireApp::new(rerun_app);
+            Ok(Self { viewer })
+        }
     }
 
     pub fn logic(&mut self, ctx: &Context, frame: &mut Frame) {
