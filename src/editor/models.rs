@@ -4,15 +4,11 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ObstacleKind {
+    #[default]
     Physical,
     Cosmetic,
-}
-
-impl Default for ObstacleKind {
-    fn default() -> Self {
-        Self::Physical
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,7 +71,14 @@ impl Obstacle {
         }
     }
 
-    pub fn new_rectangle(id: String, kind: ObstacleKind, x: f32, y: f32, width: f32, height: f32) -> Self {
+    pub fn new_rectangle(
+        id: String,
+        kind: ObstacleKind,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Self {
         Self {
             id,
             kind,
@@ -207,11 +210,17 @@ impl Default for MissionSetCollection {
 
 impl MissionSetCollection {
     pub fn active_data(&self) -> Option<&MissionData> {
-        self.sets.iter().find(|s| s.id == self.active_set_id).map(|s| &s.data)
+        self.sets
+            .iter()
+            .find(|s| s.id == self.active_set_id)
+            .map(|s| &s.data)
     }
 
     pub fn active_data_mut(&mut self) -> Option<&mut MissionData> {
-        self.sets.iter_mut().find(|s| s.id == self.active_set_id).map(|s| &mut s.data)
+        self.sets
+            .iter_mut()
+            .find(|s| s.id == self.active_set_id)
+            .map(|s| &mut s.data)
     }
 
     pub fn set_active(&mut self, id: &str) -> bool {
@@ -236,7 +245,12 @@ impl MissionSetCollection {
 
     pub fn duplicate_active(&mut self) -> Option<String> {
         let active_data = self.active_data()?.clone();
-        let active_name = self.sets.iter().find(|s| s.id == self.active_set_id)?.name.clone();
+        let active_name = self
+            .sets
+            .iter()
+            .find(|s| s.id == self.active_set_id)?
+            .name
+            .clone();
         let new_name = format!("{} (Cópia)", active_name);
         Some(self.add_set(new_name, active_data))
     }
@@ -302,30 +316,58 @@ mod tests {
 
     #[test]
     fn test_load_existing_mission_points() {
-        let path = "mission_points.yaml";
-        let data = MissionData::load_from_file(path).expect("Should load mission_points.yaml");
+        let sample_yaml = r#"
+points:
+  - x: 10.0
+    y: 20.0
+    odom_speed: 1.5
+obstacles: []
+"#;
+        let temp_path =
+            std::env::temp_dir().join(format!("test_mission_points_{}.yaml", std::process::id()));
+        std::fs::write(&temp_path, sample_yaml).expect("Failed to write temp test yaml");
+
+        let data =
+            MissionData::load_from_file(&temp_path).expect("Should load mission_points.yaml");
         assert!(!data.points.is_empty(), "Points array should not be empty");
         assert!(data.points[0].extra.contains_key("odom_speed"));
+
+        let _ = std::fs::remove_file(temp_path);
     }
 
     #[test]
     fn test_dynamic_parameters_roundtrip() {
         let mut data = MissionData::default();
         let mut pt = MissionPoint::new(10.0, 20.0);
-        pt.extra.insert("custom_field".to_string(), serde_yaml::Value::String("test_val".to_string()));
+        pt.extra.insert(
+            "custom_field".to_string(),
+            serde_yaml::Value::String("test_val".to_string()),
+        );
         data.points.push(pt);
 
         let yaml = serde_yaml::to_string(&data).unwrap();
         assert!(yaml.contains("custom_field: test_val"));
 
         let loaded: MissionData = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(loaded.points[0].extra.get("custom_field").unwrap().as_str().unwrap(), "test_val");
+        assert_eq!(
+            loaded.points[0]
+                .extra
+                .get("custom_field")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "test_val"
+        );
     }
 
     #[test]
     fn test_line_obstacle_roundtrip() {
         let mut data = MissionData::default();
-        let obs = Obstacle::new_line("obs_1".to_string(), ObstacleKind::Physical, vec![[0.0, 0.0], [5.0, 5.0]]);
+        let obs = Obstacle::new_line(
+            "obs_1".to_string(),
+            ObstacleKind::Physical,
+            vec![[0.0, 0.0], [5.0, 5.0]],
+        );
         data.obstacles.push(obs);
 
         let yaml = serde_yaml::to_string(&data).unwrap();
@@ -350,16 +392,24 @@ mod tests {
 
         let mut data2 = MissionData::default();
         data2.points.push(MissionPoint::new(10.0, 20.0));
-        data2.obstacles.push(Obstacle::new_circle("obs1".to_string(), ObstacleKind::Physical, [5.0, 5.0], 2.5));
+        data2.obstacles.push(Obstacle::new_circle(
+            "obs1".to_string(),
+            ObstacleKind::Physical,
+            [5.0, 5.0],
+            2.5,
+        ));
 
         let id1 = collection.add_set("Rota A", data1);
         let id2 = collection.add_set("Rota B", data2);
         collection.set_active(&id2);
 
         let temp_path = std::env::temp_dir().join("test_mission_collection.json");
-        collection.save_to_file(&temp_path).expect("Should save collection");
+        collection
+            .save_to_file(&temp_path)
+            .expect("Should save collection");
 
-        let loaded = MissionSetCollection::load_from_file(&temp_path).expect("Should load collection");
+        let loaded =
+            MissionSetCollection::load_from_file(&temp_path).expect("Should load collection");
         assert_eq!(loaded.active_set_id, id2);
         assert_eq!(loaded.sets.len(), 3); // default + Rota A + Rota B
 
@@ -368,7 +418,11 @@ mod tests {
         assert_eq!(active.points[0].x, 10.0);
         assert_eq!(active.obstacles.len(), 1);
 
-        let set_a = loaded.sets.iter().find(|s| s.id == id1).expect("Should find Rota A");
+        let set_a = loaded
+            .sets
+            .iter()
+            .find(|s| s.id == id1)
+            .expect("Should find Rota A");
         assert_eq!(set_a.name, "Rota A");
         assert_eq!(set_a.data.points.len(), 2);
 

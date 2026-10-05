@@ -94,6 +94,86 @@ cargo install -f wasm-bindgen-cli
 
 ---
 
+## :hammer_and_wrench: Makefile e Automação
+
+O projeto inclui um `Makefile` completo para facilitar o fluxo de build, download de binários no robô e configuração de serviços:
+
+```bash
+make help          # Exibe todos os comandos disponíveis
+make build         # Compila o binário nativo com Cargo
+make build-web     # Compila os artefatos WebAssembly (web/)
+make all           # Compila nativo + web
+```
+
+---
+
+## :robot: Instalação no Robô (Jetson / Sem Cargo)
+
+No robô (Nvidia Jetson / arquitetura `aarch64`), a compilação do Rust e suas dependências gráficas (`eframe`, `wgpu`, `rewire-viewer`) pode consumir muita memória RAM e espaço em disco. Para contornar isso, o projeto disponibiliza binários pré-compilados nas Releases do GitHub.
+
+### Opção A: Instalação Rápida via Makefile (Recomendado no Robô)
+
+O `Makefile` detecta automaticamente a arquitetura do robô (`aarch64` ou `x86_64`) e baixa os binários e os artefatos WebAssembly sem precisar do Cargo:
+
+```bash
+# 1. Baixar o binário da arquitetura e o pacote WebAssembly (web/)
+make download
+
+# 2. Instalar no sistema (/usr/local/bin e /usr/local/share)
+sudo make install
+
+# Ou instalar apenas para o usuário atual (~/.local/bin):
+make install-user
+```
+
+### Opção B: Serviço do Sistema (Systemd no Robô)
+
+Para que o robô suba o servidor web/daemon automaticamente na inicialização:
+
+```bash
+# Cria o arquivo /etc/systemd/system/perse_egui.service
+make service
+
+# Ativar e iniciar o serviço
+sudo systemctl enable --now perse_egui
+
+# Verificar status
+sudo systemctl status perse_egui
+```
+
+---
+
+## :package: Integração com ROS 2 (Colcon)
+
+O `perse_egui` é estruturado como um pacote ROS 2 `ament_cmake`. Ele pode ser clonado dentro da sua workspace (`perse_ws/src/perse_egui`).
+
+### 1. Compilando com Cargo (Desktop / Estação de Desenvolvimento)
+
+Se o `cargo` estiver instalado, o `colcon build` compilará o pacote normalmente:
+
+```bash
+colcon build --packages-select perse_egui
+source install/setup.bash
+```
+
+> **Dica para computadores com pouca RAM**: limite a quantidade de jobs de compilação:
+> ```bash
+> colcon build --packages-select perse_egui --cmake-args -DCMAKE_BUILD_PARALLEL_LEVEL=2
+> ```
+
+### 2. No Robô sem Cargo ou Forçando Binário Pré-Compilado
+
+Se o `cargo` **não** estiver instalado no robô, o `CMakeLists.txt` detecta automaticamente e realiza o download do binário correspondente e do tarball WebAssembly durante o `colcon build`.
+
+Caso queira forçar o download mesmo se tiver cargo instalado:
+
+```bash
+colcon build --packages-select perse_egui --cmake-args -DPERSE_DOWNLOAD_PREBUILT=ON
+source install/setup.bash
+```
+
+---
+
 ## :rocket: Como Executar
 
 ### 1. Aplicação Nativa (Desktop)
@@ -101,71 +181,41 @@ cargo install -f wasm-bindgen-cli
 Para executar a interface nativa conectando-se ao rewire local:
 
 ```bash
+# Via Makefile:
+make run
+
+# Ou via Cargo:
 cargo run --release
-```
 
-Para conectar-se a um robô remoto na rede (ex: Jetson do Perse no IP `192.168.0.100`):
-
-```bash
+# Conectando a um robô remoto (ex: Jetson no IP 192.168.0.100):
 cargo run --release -- --connect 192.168.0.100:9876
 ```
 
-### 2. Modo Daemon (Servidor no Robô)
+### 2. Modo Daemon no Robô (Servidor Web & Proxy)
 
-No robô (Jetson), inicie o `perse_egui` em modo servidor/daemon:
-
-```bash
-cargo run --release -- --daemon --port 8080 --connect 127.0.0.1:9876
-```
-
-Com o daemon rodando:
-- O servidor HTTP serve os arquivos da pasta `web/` na porta `8080`.
-- O endpoint WebSocket de controle fica em `/ws/control`.
-- As requisições de telemetria gRPC/rewire são encaminhadas transparentemente através de `/proxy`.
-
-### 3. Compilando os Artefatos Web (WASM)
-
-Para atualizar os arquivos WebAssembly em `web/`:
+No robô, inicie o `perse_egui` como daemon para disponibilizar o painel no navegador:
 
 ```bash
-./build_web.sh
+# Via Makefile:
+make daemon PORT=8080 CONNECT=127.0.0.1:9876
+
+# Ou diretamente pelo executável instalado:
+perse_egui --daemon --port 8080 --connect 127.0.0.1:9876
+
+# Ou via ROS 2 launch:
+ros2 launch perse_egui perse_egui.launch daemon:=true port:=8080
 ```
 
-Depois, basta acessar `http://localhost:8080` (ou o IP do robô na porta `8080`) pelo navegador.
-
----
-
-## :package: Integração com ROS 2 (Colcon)
-
-O `perse_egui` é estruturado como um pacote ROS 2 `ament_cmake`. Ele pode ser colocado dentro do diretório `src/` da sua workspace do ROS 2 (`perse_ws/src/perse_egui`).
-
-### Compilando via Colcon
-
-Na raiz da sua workspace do ROS 2:
-
-```bash
-colcon build --packages-select perse_egui
-source install/setup.bash
-```
-
-> **Dica para computadores com limitação de memória RAM**: caso a compilação do Rust e de pacotes C++ sature os recursos, limite as threads de build:
-> ```bash
-> export MAKEFLAGS="-j 2"
-> export CARGO_BUILD_JOBS=2
-> colcon build --packages-select perse_egui --executor sequential
-> ```
-
-### Executando pelo ROS 2
-
-Com o setup da workspace carregado:
-
-```bash
-# Executar diretamente o nó
-ros2 run perse_egui perse_egui
-
-# Ou através do arquivo de launch
-ros2 launch perse_egui perse_egui.launch
-```
+Quando o daemon está rodando:
+- A interface WebAssembly é servida em `http://<IP_DO_ROBO>:8080`.
+- O endpoint WebSocket de controle (`/ws/control`) sincroniza missões, terminais, parâmetros e launchfiles em tempo real.
+- O proxy reverso integrado (`/proxy`) repassa streams de vídeo e mensagens gRPC para o `rewire`.
+- O diretório dos arquivos web é resolvido automaticamente em:
+  1. Argumento CLI `--web-dir <CAMINHO>`
+  2. Variável de ambiente `PERSE_WEB_DIR`
+  3. `./web` (diretório local de execução)
+  4. `<caminho_do_executável>/web`
+  5. `<prefixo>/share/perse_egui/web` (instalação padrão do sistema/ROS 2)
 
 ---
 

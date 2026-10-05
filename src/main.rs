@@ -25,6 +25,10 @@ struct Cli {
     /// Porta para o servidor web daemon (padrão: 8080)
     #[arg(long, default_value = "8080")]
     port: u16,
+
+    /// Diretório dos arquivos WebAssembly (padrão: busca em "web", no diretório do binário ou no pacote ROS)
+    #[arg(long)]
+    web_dir: Option<String>,
 }
 
 #[global_allocator]
@@ -41,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.daemon {
         runtime.block_on(async move {
             re_log::setup_logging();
-            net::daemon::run_daemon_server(cli.port, cli.connect).await
+            net::daemon::run_daemon_server(cli.port, cli.connect, cli.web_dir).await
         })?;
         return Ok(());
     }

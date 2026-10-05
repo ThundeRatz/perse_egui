@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::editor::models::MissionSetCollection;
 use crate::panels::parameters::{PackageParams, ParameterValue};
+use serde::{Deserialize, Serialize};
 
 /// Envelope padrão para mensagens no canal de controle `/ws/control`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -244,4 +244,3 @@ mod tests {
         assert_eq!(resp.collection.active_set_id, coll.active_set_id);
     }
 }
-

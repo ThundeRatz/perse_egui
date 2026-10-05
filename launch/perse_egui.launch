@@ -1,4 +1,14 @@
 <launch>
-    <node pkg="perse_egui" exec="perse_egui" name="perse_egui" output="screen">
-    </node>
+    <arg name="daemon" default="false" description="Executar em modo servidor daemon (headless no robô)"/>
+    <arg name="port" default="8080" description="Porta HTTP/WebSocket para o modo daemon"/>
+    <arg name="connect" default="127.0.0.1:9876" description="Endpoint de conexão do rewire / rerun"/>
+
+    <group if="$(var daemon)">
+        <node pkg="perse_egui" exec="perse_egui" name="perse_egui" output="screen"
+              args="--daemon --port $(var port) --connect $(var connect)"/>
+    </group>
+    <group unless="$(var daemon)">
+        <node pkg="perse_egui" exec="perse_egui" name="perse_egui" output="screen"
+              args="--connect $(var connect)"/>
+    </group>
 </launch>

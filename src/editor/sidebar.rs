@@ -123,6 +123,7 @@ impl Default for RemoteFileDialogState {
     }
 }
 
+#[derive(Default)]
 pub struct EditorSidebar {
     pub new_param_key: String,
     pub new_param_val: String,
@@ -131,20 +132,6 @@ pub struct EditorSidebar {
     pub is_renaming_set: bool,
     pub rename_input: String,
     pub pending_overwrite_data: Option<(String, MissionData)>,
-}
-
-impl Default for EditorSidebar {
-    fn default() -> Self {
-        Self {
-            new_param_key: String::new(),
-            new_param_val: String::new(),
-            show_add_param_popup: false,
-            remote_dialog: RemoteFileDialogState::default(),
-            is_renaming_set: false,
-            rename_input: String::new(),
-            pending_overwrite_data: None,
-        }
-    }
 }
 
 impl EditorSidebar {
@@ -161,7 +148,8 @@ impl EditorSidebar {
                     serde_json::to_value(crate::net::protocol::SaveMissionDataRequest {
                         collection: sets.clone(),
                         target_path: Some(file_path.to_string()),
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 ));
             }
         }
@@ -179,7 +167,8 @@ impl EditorSidebar {
                     "list_files",
                     serde_json::to_value(crate::net::protocol::ListFilesRequest {
                         path: path.to_string(),
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 ));
                 return;
             }
@@ -203,32 +192,39 @@ impl EditorSidebar {
                         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
                         if is_dir || name.ends_with(".yaml") || name.ends_with(".yml") {
-                            entries.push(crate::net::protocol::RemoteFileEntry { name, is_dir, size });
+                            entries.push(crate::net::protocol::RemoteFileEntry {
+                                name,
+                                is_dir,
+                                size,
+                            });
                         }
                     }
 
-                    entries.sort_by(|a, b| {
-                        match (a.is_dir, b.is_dir) {
-                            (true, false) => std::cmp::Ordering::Less,
-                            (false, true) => std::cmp::Ordering::Greater,
-                            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                        }
+                    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                     });
 
                     self.remote_dialog.current_path = target.to_string_lossy().to_string();
-                    self.remote_dialog.parent_path = target.parent().map(|p| p.to_string_lossy().to_string());
+                    self.remote_dialog.parent_path =
+                        target.parent().map(|p| p.to_string_lossy().to_string());
                     self.remote_dialog.entries = entries;
                     self.remote_dialog.error_msg = None;
                 }
                 Err(e) => {
-                    self.remote_dialog.error_msg = Some(format!("Erro ao acessar diretório local: {}", e));
+                    self.remote_dialog.error_msg =
+                        Some(format!("Erro ao acessar diretório local: {}", e));
                 }
             }
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            self.remote_dialog.error_msg = Some("Host desconectado. Conecte ao robô para navegar no sistema de arquivos.".to_string());
+            self.remote_dialog.error_msg = Some(
+                "Host desconectado. Conecte ao robô para navegar no sistema de arquivos."
+                    .to_string(),
+            );
         }
     }
 
@@ -248,7 +244,8 @@ impl EditorSidebar {
                     "load_file",
                     serde_json::to_value(crate::net::protocol::LoadMissionFileRequest {
                         path: path.to_string(),
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 ));
                 *status_msg = format!("Requisitado carregamento de '{}' ao host...", path);
                 return;
@@ -259,7 +256,15 @@ impl EditorSidebar {
         {
             match MissionData::load_from_file(path) {
                 Ok(loaded) => {
-                    self.apply_loaded_data(sets_guard, path.to_string(), loaded, status_msg, selection, client, file_path);
+                    self.apply_loaded_data(
+                        sets_guard,
+                        path.to_string(),
+                        loaded,
+                        status_msg,
+                        selection,
+                        client,
+                        file_path,
+                    );
                 }
                 Err(e) => {
                     *status_msg = format!("Erro ao carregar: {}", e);
@@ -280,7 +285,9 @@ impl EditorSidebar {
         path: &str,
         status_msg: &mut String,
     ) {
-        let Some(data) = sets_guard.active_data() else { return; };
+        let Some(data) = sets_guard.active_data() else {
+            return;
+        };
 
         if let Some(c) = client {
             if c.is_connected() {
@@ -290,7 +297,8 @@ impl EditorSidebar {
                     serde_json::to_value(crate::net::protocol::SaveMissionFileRequest {
                         path: path.to_string(),
                         data: data.clone(),
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 ));
                 c.send(crate::net::protocol::ControlMessage::new(
                     crate::net::protocol::Domain::Mission,
@@ -298,7 +306,8 @@ impl EditorSidebar {
                     serde_json::to_value(crate::net::protocol::SaveMissionDataRequest {
                         collection: sets_guard.clone(),
                         target_path: Some(path.to_string()),
-                    }).unwrap_or_default(),
+                    })
+                    .unwrap_or_default(),
                 ));
                 *status_msg = format!("Salvando '{}' no host...", path);
                 return;
@@ -353,7 +362,10 @@ impl EditorSidebar {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Caminho no Host:").strong());
                     let has_parent = self.remote_dialog.parent_path.is_some();
-                    if ui.add_enabled(has_parent, egui::Button::new("⬆ Subir")).clicked() {
+                    if ui
+                        .add_enabled(has_parent, egui::Button::new("⬆ Subir"))
+                        .clicked()
+                    {
                         if let Some(parent) = self.remote_dialog.parent_path.clone() {
                             self.request_list_files(client, &parent);
                         }
@@ -395,7 +407,8 @@ impl EditorSidebar {
                             ui.weak("Nenhum arquivo ou pasta encontrado neste diretório.");
                         } else {
                             for entry in &self.remote_dialog.entries {
-                                let is_selected = self.remote_dialog.selected_file.as_deref() == Some(&entry.name);
+                                let is_selected = self.remote_dialog.selected_file.as_deref()
+                                    == Some(&entry.name);
                                 let icon = if entry.is_dir { "📁" } else { "📄" };
                                 let size_info = if entry.is_dir {
                                     "<DIR>".to_string()
@@ -430,11 +443,12 @@ impl EditorSidebar {
 
                 if let Some(folder_name) = dir_to_open {
                     let current = &self.remote_dialog.current_path;
-                    let new_path = if current == "/" || current.ends_with('/') || current.ends_with('\\') {
-                        format!("{}{}", current, folder_name)
-                    } else {
-                        format!("{}/{}", current, folder_name)
-                    };
+                    let new_path =
+                        if current == "/" || current.ends_with('/') || current.ends_with('\\') {
+                            format!("{}{}", current, folder_name)
+                        } else {
+                            format!("{}/{}", current, folder_name)
+                        };
                     self.request_list_files(client, &new_path);
                     self.remote_dialog.selected_file = None;
                 }
@@ -452,9 +466,15 @@ impl EditorSidebar {
 
                 match self.remote_dialog.mode {
                     RemoteDialogMode::Open => {
-                        let sel_label = self.remote_dialog.selected_file.clone().unwrap_or_else(|| "Nenhum selecionado".to_string());
-                        let can_open = self.remote_dialog.selected_file.is_some() || double_click_open_file.is_some();
-                        let target_to_open = double_click_open_file.or_else(|| self.remote_dialog.selected_file.clone());
+                        let sel_label = self
+                            .remote_dialog
+                            .selected_file
+                            .clone()
+                            .unwrap_or_else(|| "Nenhum selecionado".to_string());
+                        let can_open = self.remote_dialog.selected_file.is_some()
+                            || double_click_open_file.is_some();
+                        let target_to_open = double_click_open_file
+                            .or_else(|| self.remote_dialog.selected_file.clone());
                         let cur_dir = self.remote_dialog.current_path.clone();
 
                         let mut should_open = false;
@@ -462,16 +482,21 @@ impl EditorSidebar {
                             ui.label(RichText::new("Arquivo:").weak());
                             ui.label(RichText::new(&sel_label).strong());
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Cancelar").clicked() {
-                                    self.remote_dialog.is_open = false;
-                                }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Cancelar").clicked() {
+                                        self.remote_dialog.is_open = false;
+                                    }
 
-                                let open_clicked = ui.add_enabled(can_open, egui::Button::new("📂 Abrir")).clicked();
-                                if open_clicked && can_open {
-                                    should_open = true;
-                                }
-                            });
+                                    let open_clicked = ui
+                                        .add_enabled(can_open, egui::Button::new("📂 Abrir"))
+                                        .clicked();
+                                    if open_clicked && can_open {
+                                        should_open = true;
+                                    }
+                                },
+                            );
                         });
 
                         if should_open {
@@ -486,7 +511,9 @@ impl EditorSidebar {
 
                                 *file_path = full_path.clone();
                                 let cur_fp = file_path.clone();
-                                self.execute_load(client, sets_guard, &full_path, status_msg, selection, &cur_fp);
+                                self.execute_load(
+                                    client, sets_guard, &full_path, status_msg, selection, &cur_fp,
+                                );
                                 self.remote_dialog.is_open = false;
                             }
                         }
@@ -499,16 +526,23 @@ impl EditorSidebar {
                             ui.label(RichText::new("Nome do arquivo:").weak());
                             ui.text_edit_singleline(&mut self.remote_dialog.save_filename);
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Cancelar").clicked() {
-                                    self.remote_dialog.is_open = false;
-                                }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Cancelar").clicked() {
+                                        self.remote_dialog.is_open = false;
+                                    }
 
-                                let can_save = !self.remote_dialog.save_filename.trim().is_empty();
-                                if ui.add_enabled(can_save, egui::Button::new("💾 Salvar")).clicked() {
-                                    should_save = true;
-                                }
-                            });
+                                    let can_save =
+                                        !self.remote_dialog.save_filename.trim().is_empty();
+                                    if ui
+                                        .add_enabled(can_save, egui::Button::new("💾 Salvar"))
+                                        .clicked()
+                                    {
+                                        should_save = true;
+                                    }
+                                },
+                            );
                         });
 
                         if should_save {
@@ -567,7 +601,8 @@ impl EditorSidebar {
                         if ui.button("Confirmar / Sobrescrever").clicked() {
                             if let Some(data) = sets_guard.active_data_mut() {
                                 *data = loaded;
-                                *status_msg = format!("Conjunto atual substituído por '{}'!", path_str);
+                                *status_msg =
+                                    format!("Conjunto atual substituído por '{}'!", path_str);
                                 selection.clear();
                                 Self::notify_sets_updated(client, sets_guard, file_path);
                             }
@@ -591,7 +626,9 @@ impl EditorSidebar {
                 ui.vertical(|ui| {
                     if selection.is_empty() {
                         simple_section_header(ui, "Propriedades", |_| {});
-                        self.show_global_info(ui, sets_guard, file_path, status_msg, selection, client);
+                        self.show_global_info(
+                            ui, sets_guard, file_path, status_msg, selection, client,
+                        );
                     } else if selection.points.len() == 1 && selection.obstacles.is_empty() {
                         let idx = *selection.points.iter().next().unwrap();
                         if let Some(data) = sets_guard.active_data_mut() {
@@ -692,7 +729,7 @@ impl EditorSidebar {
     ) {
         let is_non_empty = sets_guard
             .active_data()
-            .map_or(false, |d| !d.points.is_empty() || !d.obstacles.is_empty());
+            .is_some_and(|d| !d.points.is_empty() || !d.obstacles.is_empty());
 
         if is_non_empty {
             self.pending_overwrite_data = Some((path_str, loaded));
@@ -745,7 +782,11 @@ impl EditorSidebar {
             if self.is_renaming_set {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut self.rename_input).desired_width(120.0));
-                    if ui.small_button("✓").on_hover_text("Confirmar nome").clicked() {
+                    if ui
+                        .small_button("✓")
+                        .on_hover_text("Confirmar nome")
+                        .clicked()
+                    {
                         if !self.rename_input.trim().is_empty() {
                             sets_guard.rename_active(self.rename_input.trim());
                             Self::notify_sets_updated(client, sets_guard, file_path);
@@ -758,21 +799,34 @@ impl EditorSidebar {
                 });
             } else {
                 ui.horizontal(|ui| {
-                    if ui.button("➕ Novo").on_hover_text("Criar novo conjunto de pontos e obstáculos").clicked() {
+                    if ui
+                        .button("➕ Novo")
+                        .on_hover_text("Criar novo conjunto de pontos e obstáculos")
+                        .clicked()
+                    {
                         let count = sets_guard.sets.len() + 1;
-                        let new_id = sets_guard.add_set(format!("Missão {}", count), MissionData::default());
+                        let new_id =
+                            sets_guard.add_set(format!("Missão {}", count), MissionData::default());
                         sets_guard.set_active(&new_id);
                         selection.clear();
                         Self::notify_sets_updated(client, sets_guard, file_path);
                     }
 
-                    if ui.button("📋 Duplicar").on_hover_text("Duplicar o conjunto atual").clicked() {
+                    if ui
+                        .button("📋 Duplicar")
+                        .on_hover_text("Duplicar o conjunto atual")
+                        .clicked()
+                    {
                         sets_guard.duplicate_active();
                         selection.clear();
                         Self::notify_sets_updated(client, sets_guard, file_path);
                     }
 
-                    if ui.button("✏️ Renomear").on_hover_text("Renomear o conjunto atual").clicked() {
+                    if ui
+                        .button("✏️ Renomear")
+                        .on_hover_text("Renomear o conjunto atual")
+                        .clicked()
+                    {
                         self.rename_input = active_name;
                         self.is_renaming_set = true;
                     }
@@ -799,12 +853,22 @@ impl EditorSidebar {
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("📥 Carregar").on_hover_text("Carregar arquivo e substituir conjunto atual").clicked() {
+                if ui
+                    .button("📥 Carregar")
+                    .on_hover_text("Carregar arquivo e substituir conjunto atual")
+                    .clicked()
+                {
                     let cur_path = file_path.clone();
-                    self.execute_load(client, sets_guard, &cur_path, status_msg, selection, file_path);
+                    self.execute_load(
+                        client, sets_guard, &cur_path, status_msg, selection, file_path,
+                    );
                 }
 
-                if ui.button("💾 Salvar").on_hover_text("Salvar conjunto atual no arquivo especificado").clicked() {
+                if ui
+                    .button("💾 Salvar")
+                    .on_hover_text("Salvar conjunto atual no arquivo especificado")
+                    .clicked()
+                {
                     let cur_path = file_path.clone();
                     self.execute_save(client, sets_guard, &cur_path, status_msg);
                 }
@@ -872,7 +936,8 @@ impl EditorSidebar {
                         if idx > 0 && ui.small_button("⬆ Mover para Cima").clicked() {
                             move_up = true;
                         }
-                        if idx + 1 < points_len && ui.small_button("⬇ Mover para Baixo").clicked() {
+                        if idx + 1 < points_len && ui.small_button("⬇ Mover para Baixo").clicked()
+                        {
                             move_down = true;
                         }
                         if ui.small_button("🗑 Excluir Ponto").clicked() {
@@ -901,14 +966,30 @@ impl EditorSidebar {
                 data.points.swap(idx, idx - 1);
                 let has_curr = selection.points.contains(&idx);
                 let has_prev = selection.points.contains(&(idx - 1));
-                if has_curr { selection.points.insert(idx - 1); } else { selection.points.remove(&(idx - 1)); }
-                if has_prev { selection.points.insert(idx); } else { selection.points.remove(&idx); }
+                if has_curr {
+                    selection.points.insert(idx - 1);
+                } else {
+                    selection.points.remove(&(idx - 1));
+                }
+                if has_prev {
+                    selection.points.insert(idx);
+                } else {
+                    selection.points.remove(&idx);
+                }
             } else if move_down {
                 data.points.swap(idx, idx + 1);
                 let has_curr = selection.points.contains(&idx);
                 let has_next = selection.points.contains(&(idx + 1));
-                if has_curr { selection.points.insert(idx + 1); } else { selection.points.remove(&(idx + 1)); }
-                if has_next { selection.points.insert(idx); } else { selection.points.remove(&idx); }
+                if has_curr {
+                    selection.points.insert(idx + 1);
+                } else {
+                    selection.points.remove(&(idx + 1));
+                }
+                if has_next {
+                    selection.points.insert(idx);
+                } else {
+                    selection.points.remove(&idx);
+                }
             } else if delete_pt {
                 data.points.remove(idx);
                 selection.remove_point_and_adjust(idx);
@@ -1149,9 +1230,9 @@ fn render_aligned_parameters(
         .show(ui, |ui| {
             for (k, v) in extra.iter_mut() {
                 let row_min_y = ui.cursor().min.y - 2.0;
-                let is_hovered = ui.input(|i| i.pointer.hover_pos()).map_or(false, |pos| {
-                    pos.y >= row_min_y && pos.y <= row_min_y + 24.0
-                });
+                let is_hovered = ui
+                    .input(|i| i.pointer.hover_pos())
+                    .is_some_and(|pos| pos.y >= row_min_y && pos.y <= row_min_y + 24.0);
 
                 let is_visible = visible_param_keys.contains(k);
 
@@ -1181,8 +1262,11 @@ fn render_aligned_parameters(
                                 .fit_to_exact_size(egui::vec2(13.0, 13.0))
                                 .tint(tint);
 
-                            let eye_btn = ui.add(egui::Button::image(eye_img).fill(Color32::TRANSPARENT))
-                                .on_hover_text("Exibir/ocultar parâmetro no canvas (para todos os marcos)");
+                            let eye_btn = ui
+                                .add(egui::Button::image(eye_img).fill(Color32::TRANSPARENT))
+                                .on_hover_text(
+                                    "Exibir/ocultar parâmetro no canvas (para todos os marcos)",
+                                );
 
                             if eye_btn.clicked() {
                                 if is_visible {
@@ -1192,10 +1276,13 @@ fn render_aligned_parameters(
                                 }
                             }
 
-                            if is_hovered {
-                                if ui.small_button("🗑").on_hover_text("Remover parâmetro").clicked() {
-                                    to_remove = Some(k.clone());
-                                }
+                            if is_hovered
+                                && ui
+                                    .small_button("🗑")
+                                    .on_hover_text("Remover parâmetro")
+                                    .clicked()
+                            {
+                                to_remove = Some(k.clone());
                             }
                         });
                     }
@@ -1221,7 +1308,10 @@ fn render_dynamic_param_val(ui: &mut Ui, val: &mut serde_yaml::Value) {
         serde_yaml::Value::Number(n) => {
             if let Some(f) = n.as_f64() {
                 let mut float_val = f;
-                if ui.add(egui::DragValue::new(&mut float_val).speed(0.05)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut float_val).speed(0.05))
+                    .changed()
+                {
                     *val = serde_yaml::Value::Number(serde_yaml::Number::from(float_val));
                 }
             }

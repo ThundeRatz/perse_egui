@@ -46,7 +46,10 @@ impl SettingsPanel {
 
                 ui.add_space(8.0);
                 ui.label("Sensibilidade do Zoom (Editor 2D):");
-                ui.add(egui::Slider::new(&mut config.zoom_speed, 0.005..=0.1).text("Velocidade do Scroll"));
+                ui.add(
+                    egui::Slider::new(&mut config.zoom_speed, 0.005..=0.1)
+                        .text("Velocidade do Scroll"),
+                );
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -63,7 +66,10 @@ impl SettingsPanel {
                 ui.horizontal(|ui| {
                     let mut path_str = config.custom_config_path.clone().unwrap_or_default();
                     if ui
-                        .add(egui::TextEdit::singleline(&mut path_str).hint_text("ex: /caminho/para/config.json"))
+                        .add(
+                            egui::TextEdit::singleline(&mut path_str)
+                                .hint_text("ex: /caminho/para/config.json"),
+                        )
                         .changed()
                     {
                         if path_str.trim().is_empty() {

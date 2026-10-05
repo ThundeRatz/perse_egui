@@ -74,7 +74,12 @@ impl Default for MissionEditor {
 }
 
 impl MissionEditor {
-    pub fn ui(&mut self, ui: &mut egui::Ui, zoom_speed: f32, client: Option<&crate::net::client::ControlClient>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        zoom_speed: f32,
+        client: Option<&crate::net::client::ControlClient>,
+    ) {
         let panel_bg = ui.visuals().panel_fill;
         let sets_arc = get_shared_mission_sets();
         let mut sets_guard = sets_arc.lock().unwrap_or_else(|e| e.into_inner());
@@ -103,7 +108,8 @@ impl MissionEditor {
             } else {
                 self.file_path.clone()
             };
-            self.sidebar.execute_save(client, &mut sets_guard, &save_target, &mut self.status_msg);
+            self.sidebar
+                .execute_save(client, &mut sets_guard, &save_target, &mut self.status_msg);
             self.cached_disk_data = sets_guard.active_data().cloned();
         }
 
@@ -126,7 +132,10 @@ impl MissionEditor {
                 );
             });
 
-        if self.status_msg.contains("salvo com sucesso") || self.status_msg.contains("Salvando") || self.status_msg.contains("substituído por") {
+        if self.status_msg.contains("salvo com sucesso")
+            || self.status_msg.contains("Salvando")
+            || self.status_msg.contains("substituído por")
+        {
             self.cached_disk_data = sets_guard.active_data().cloned();
         }
 
@@ -172,7 +181,10 @@ impl MissionEditor {
                             .fill(egui::Color32::from_black_alpha(210))
                             .corner_radius(6.0)
                             .inner_margin(egui::Margin::symmetric(2, 4))
-                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(220, 160, 40, 100)))
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_rgba_premultiplied(220, 160, 40, 100),
+                            ))
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new("Diferente de mission_points.yaml")
@@ -210,7 +222,10 @@ mod tests {
             let sets_arc = get_shared_mission_sets();
             let guard = sets_arc.lock().unwrap();
             let data = guard.active_data().unwrap();
-            let last_pt = data.points.last().expect("Ponto adicionado no editor 1 deve refletir no editor 2");
+            let last_pt = data
+                .points
+                .last()
+                .expect("Ponto adicionado no editor 1 deve refletir no editor 2");
             assert_eq!(last_pt.x, 99.0);
             assert_eq!(last_pt.y, 88.0);
         }

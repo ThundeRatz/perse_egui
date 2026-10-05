@@ -75,7 +75,9 @@ impl RewireIntegration {
                 endpoint.to_string()
             };
 
-            if (url.starts_with("rerun+http://") || url.starts_with("http://")) && !url.ends_with("/proxy") {
+            if (url.starts_with("rerun+http://") || url.starts_with("http://"))
+                && !url.ends_with("/proxy")
+            {
                 url = format!("{}/proxy", url.trim_end_matches('/'));
             }
 

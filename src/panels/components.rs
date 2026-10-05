@@ -31,7 +31,8 @@ pub fn section_header(
                     let mut close_clicked = false;
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if re_icon_button(ui, &re_ui::icons::CLOSE_SMALL, "Fechar busca").clicked() {
+                        if re_icon_button(ui, &re_ui::icons::CLOSE_SMALL, "Fechar busca").clicked()
+                        {
                             close_clicked = true;
                         }
 
@@ -43,7 +44,8 @@ pub fn section_header(
                         );
 
                         let focus_id = ui.id().with("search_focused");
-                        let was_focused: bool = ui.data_mut(|d| d.get_temp(focus_id)).unwrap_or(false);
+                        let was_focused: bool =
+                            ui.data_mut(|d| d.get_temp(focus_id)).unwrap_or(false);
                         if !was_focused {
                             response.request_focus();
                             ui.data_mut(|d| d.insert_temp(focus_id, true));
@@ -69,7 +71,9 @@ pub fn section_header(
 
                     // Botões alinhados à direita (a lupa fica no extremo direito para alinhar com o botão de fechar)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if re_icon_button(ui, &re_ui::icons::SEARCH, "Buscar neste painel").clicked() {
+                        if re_icon_button(ui, &re_ui::icons::SEARCH, "Buscar neste painel")
+                            .clicked()
+                        {
                             *search_active = true;
                             let focus_id = ui.id().with("search_focused");
                             ui.data_mut(|d| d.insert_temp(focus_id, false));
@@ -104,7 +108,10 @@ pub fn simple_section_header(ui: &mut Ui, title: &str, add_buttons: impl FnOnce(
                         .color(Color32::from_gray(230)),
                 );
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_buttons);
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    add_buttons,
+                );
             });
         });
 }
@@ -152,11 +159,8 @@ pub fn re_icon_toggle_button(
         .fit_to_exact_size(egui::vec2(13.0, 13.0))
         .tint(tint);
 
-    let btn = egui::Button::image_and_text(
-        img,
-        RichText::new(text).color(text_color).size(12.0),
-    )
-    .fill(Color32::TRANSPARENT);
+    let btn = egui::Button::image_and_text(img, RichText::new(text).color(text_color).size(12.0))
+        .fill(Color32::TRANSPARENT);
 
     ui.add(btn)
 }

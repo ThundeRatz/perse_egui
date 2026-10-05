@@ -12,16 +12,11 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewMode {
+    #[default]
     RerunViewer,
     MissionEditor,
-}
-
-impl Default for ViewMode {
-    fn default() -> Self {
-        Self::RerunViewer
-    }
 }
 
 pub struct MyApp {
@@ -85,7 +80,9 @@ impl MyApp {
                 }
             }
             if let Some(sets_json) = storage.get_string("perse_egui.mission_sets") {
-                if let Ok(loaded_sets) = serde_json::from_str::<crate::editor::models::MissionSetCollection>(&sets_json) {
+                if let Ok(loaded_sets) =
+                    serde_json::from_str::<crate::editor::models::MissionSetCollection>(&sets_json)
+                {
                     if !loaded_sets.sets.is_empty() {
                         loaded_mission_sets = Some(loaded_sets);
                     }
@@ -94,7 +91,9 @@ impl MyApp {
         }
 
         // 2. Resolver o caminho de configuração customizado (CLI override tem prioridade)
-        let target_path = cli_config_path.clone().or_else(|| config.custom_config_path.clone());
+        let target_path = cli_config_path
+            .clone()
+            .or_else(|| config.custom_config_path.clone());
 
         // 3. Tentar carregar do arquivo no caminho customizado se fornecido
         if let Some(ref path) = target_path {
@@ -122,7 +121,9 @@ impl MyApp {
         let mission_sets = loaded_mission_sets.unwrap_or_else(|| {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                if let Ok(col) = crate::editor::models::MissionSetCollection::load_from_file("mission_sets.json") {
+                if let Ok(col) =
+                    crate::editor::models::MissionSetCollection::load_from_file("mission_sets.json")
+                {
                     if !col.sets.is_empty() {
                         return col;
                     }
@@ -132,8 +133,13 @@ impl MyApp {
                 } else {
                     &config.mission_file_path
                 };
-                let initial_data = crate::editor::models::MissionData::load_from_file(target_file).unwrap_or_default();
-                let default_set = crate::editor::models::MissionSet::new("default", "Missão Padrão", initial_data);
+                let initial_data = crate::editor::models::MissionData::load_from_file(target_file)
+                    .unwrap_or_default();
+                let default_set = crate::editor::models::MissionSet::new(
+                    "default",
+                    "Missão Padrão",
+                    initial_data,
+                );
                 crate::editor::models::MissionSetCollection {
                     active_set_id: "default".to_string(),
                     sets: vec![default_set],
@@ -182,7 +188,8 @@ impl App for MyApp {
     fn save(&mut self, storage: &mut dyn Storage) {
         self.rewire.save(storage);
 
-        self.config.is_display_options_open = self.mission_editor.canvas_state.is_display_options_open;
+        self.config.is_display_options_open =
+            self.mission_editor.canvas_state.is_display_options_open;
         self.config.canvas_display_options = self.mission_editor.canvas_state.view_options.clone();
         self.config.mission_file_path = self.mission_editor.file_path.clone();
 
@@ -205,15 +212,15 @@ impl App for MyApp {
             "perse_egui.theme_preference",
             self.config.theme_preference.clone(),
         );
-        storage.set_string(
-            "perse_egui.zoom_speed",
-            self.config.zoom_speed.to_string(),
-        );
+        storage.set_string("perse_egui.zoom_speed", self.config.zoom_speed.to_string());
         storage.set_string(
             "perse_egui.is_display_options_open",
             self.config.is_display_options_open.to_string(),
         );
-        storage.set_string("perse_egui.mission_file_path", self.config.mission_file_path.clone());
+        storage.set_string(
+            "perse_egui.mission_file_path",
+            self.config.mission_file_path.clone(),
+        );
         if let Ok(opts_json) = serde_json::to_string(&self.config.canvas_display_options) {
             storage.set_string("perse_egui.canvas_display_options", opts_json);
         }
@@ -246,7 +253,11 @@ impl App for MyApp {
                     mission_sets: current_sets,
                 };
                 if let Err(err) = persistent_state.save_to_file(path) {
-                    re_log::error!("Falha ao salvar estado no arquivo customizado em '{}': {}", path, err);
+                    re_log::error!(
+                        "Falha ao salvar estado no arquivo customizado em '{}': {}",
+                        path,
+                        err
+                    );
                 } else {
                     re_log::info!("Estado salvo com sucesso no arquivo customizado: {}", path);
                 }
@@ -264,18 +275,27 @@ impl App for MyApp {
             match msg.domain {
                 crate::net::protocol::Domain::Parameters => {
                     if msg.action == "tree_response" {
-                        if let Ok(resp) = serde_json::from_value::<crate::net::protocol::ParametersTreeResponse>(msg.payload) {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::ParametersTreeResponse,
+                        >(msg.payload)
+                        {
                             self.parameters_panel.update_from_remote(resp.packages);
                         }
                     }
                 }
                 crate::net::protocol::Domain::Launchfiles => {
                     if msg.action == "list_response" {
-                        if let Ok(resp) = serde_json::from_value::<crate::net::protocol::LaunchfilesListResponse>(msg.payload) {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::LaunchfilesListResponse,
+                        >(msg.payload)
+                        {
                             self.launchfiles_panel.packages = resp.packages;
                         }
                     } else if msg.action == "status" {
-                        if let Ok(notif) = serde_json::from_value::<crate::net::protocol::LaunchfileStatusNotification>(msg.payload) {
+                        if let Ok(notif) = serde_json::from_value::<
+                            crate::net::protocol::LaunchfileStatusNotification,
+                        >(msg.payload)
+                        {
                             for pkg in &mut self.launchfiles_panel.packages {
                                 if pkg.name == notif.package {
                                     for f in &mut pkg.launch_files {
@@ -292,89 +312,142 @@ impl App for MyApp {
                         }
                     }
                 }
-                crate::net::protocol::Domain::Mission => {
-                    match msg.action.as_str() {
-                        "data_response" | "data_updated" => {
-                            if let Ok(resp) = serde_json::from_value::<crate::net::protocol::MissionDataResponse>(msg.payload) {
-                                let local_sets = crate::editor::get_shared_mission_sets().lock().map(|g| g.clone()).unwrap_or_default();
-                                let local_has_points = local_sets.sets.len() > 1 || local_sets.active_data().map_or(false, |d| !d.points.is_empty() || !d.obstacles.is_empty());
-                                let remote_has_points = resp.collection.sets.len() > 1 || resp.collection.active_data().map_or(false, |d| !d.points.is_empty() || !d.obstacles.is_empty());
+                crate::net::protocol::Domain::Mission => match msg.action.as_str() {
+                    "data_response" | "data_updated" => {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::MissionDataResponse,
+                        >(msg.payload)
+                        {
+                            let local_sets = crate::editor::get_shared_mission_sets()
+                                .lock()
+                                .map(|g| g.clone())
+                                .unwrap_or_default();
+                            let local_has_points = local_sets.sets.len() > 1
+                                || local_sets.active_data().is_some_and(|d| {
+                                    !d.points.is_empty() || !d.obstacles.is_empty()
+                                });
+                            let remote_has_points = resp.collection.sets.len() > 1
+                                || resp.collection.active_data().is_some_and(|d| {
+                                    !d.points.is_empty() || !d.obstacles.is_empty()
+                                });
 
-                                if msg.action == "data_updated" || remote_has_points || !local_has_points {
-                                    crate::editor::init_shared_mission_sets(resp.collection);
-                                } else {
-                                    self.control_client.send(crate::net::protocol::ControlMessage::new(
+                            if msg.action == "data_updated"
+                                || remote_has_points
+                                || !local_has_points
+                            {
+                                crate::editor::init_shared_mission_sets(resp.collection);
+                            } else {
+                                self.control_client.send(
+                                    crate::net::protocol::ControlMessage::new(
                                         crate::net::protocol::Domain::Mission,
                                         "save_data",
-                                        serde_json::to_value(crate::net::protocol::SaveMissionDataRequest {
-                                            collection: local_sets,
-                                            target_path: Some(self.config.mission_file_path.clone()),
-                                        }).unwrap_or_default(),
-                                    ));
-                                }
+                                        serde_json::to_value(
+                                            crate::net::protocol::SaveMissionDataRequest {
+                                                collection: local_sets,
+                                                target_path: Some(
+                                                    self.config.mission_file_path.clone(),
+                                                ),
+                                            },
+                                        )
+                                        .unwrap_or_default(),
+                                    ),
+                                );
                             }
                         }
-                        "list_files_response" => {
-                            if let Ok(resp) = serde_json::from_value::<crate::net::protocol::ListFilesResponse>(msg.payload) {
-                                self.mission_editor.sidebar.remote_dialog.current_path = resp.current_path;
-                                self.mission_editor.sidebar.remote_dialog.parent_path = resp.parent_path;
-                                self.mission_editor.sidebar.remote_dialog.entries = resp.entries;
-                                self.mission_editor.sidebar.remote_dialog.error_msg = None;
-                            }
-                        }
-                        "load_file_response" => {
-                            if let Ok(resp) = serde_json::from_value::<crate::net::protocol::LoadMissionFileResponse>(msg.payload) {
-                                if resp.success {
-                                    if let Some(loaded_data) = resp.data {
-                                        self.mission_editor.file_path = resp.path.clone();
-                                        let sets_arc = crate::editor::get_shared_mission_sets();
-                                        let mut sets_guard = sets_arc.lock().unwrap_or_else(|e| e.into_inner());
-                                        let path = resp.path.clone();
-                                        self.mission_editor.sidebar.apply_loaded_data(
-                                            &mut sets_guard,
-                                            path,
-                                            loaded_data,
-                                            &mut self.mission_editor.status_msg,
-                                            &mut self.mission_editor.selection,
-                                            Some(&self.control_client),
-                                            &self.mission_editor.file_path,
-                                        );
-                                    }
-                                } else {
-                                    self.mission_editor.status_msg = resp.error.unwrap_or_else(|| "Erro ao carregar arquivo do host".to_string());
-                                }
-                            }
-                        }
-                        "save_file_response" => {
-                            if let Ok(resp) = serde_json::from_value::<crate::net::protocol::SaveMissionFileResponse>(msg.payload) {
-                                if resp.success {
-                                    self.mission_editor.file_path = resp.path.clone();
-                                    self.mission_editor.status_msg = format!("Arquivo '{}' salvo com sucesso no host!", resp.path);
-                                } else {
-                                    self.mission_editor.status_msg = resp.error.unwrap_or_else(|| "Erro ao salvar arquivo no host".to_string());
-                                }
-                            }
-                        }
-                        "save_data_response" | "save_response" => {
-                            if let Ok(resp) = serde_json::from_value::<crate::net::protocol::SaveMissionDataResponse>(msg.payload) {
-                                if resp.success {
-                                    self.mission_editor.status_msg = "Conjunto de missões sincronizado com o host!".to_string();
-                                } else {
-                                    self.mission_editor.status_msg = format!("Erro ao sincronizar com o host: {}", resp.message);
-                                }
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    "list_files_response" => {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::ListFilesResponse,
+                        >(msg.payload)
+                        {
+                            self.mission_editor.sidebar.remote_dialog.current_path =
+                                resp.current_path;
+                            self.mission_editor.sidebar.remote_dialog.parent_path =
+                                resp.parent_path;
+                            self.mission_editor.sidebar.remote_dialog.entries = resp.entries;
+                            self.mission_editor.sidebar.remote_dialog.error_msg = None;
+                        }
+                    }
+                    "load_file_response" => {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::LoadMissionFileResponse,
+                        >(msg.payload)
+                        {
+                            if resp.success {
+                                if let Some(loaded_data) = resp.data {
+                                    self.mission_editor.file_path = resp.path.clone();
+                                    let sets_arc = crate::editor::get_shared_mission_sets();
+                                    let mut sets_guard =
+                                        sets_arc.lock().unwrap_or_else(|e| e.into_inner());
+                                    let path = resp.path.clone();
+                                    self.mission_editor.sidebar.apply_loaded_data(
+                                        &mut sets_guard,
+                                        path,
+                                        loaded_data,
+                                        &mut self.mission_editor.status_msg,
+                                        &mut self.mission_editor.selection,
+                                        Some(&self.control_client),
+                                        &self.mission_editor.file_path,
+                                    );
+                                }
+                            } else {
+                                self.mission_editor.status_msg = resp.error.unwrap_or_else(|| {
+                                    "Erro ao carregar arquivo do host".to_string()
+                                });
+                            }
+                        }
+                    }
+                    "save_file_response" => {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::SaveMissionFileResponse,
+                        >(msg.payload)
+                        {
+                            if resp.success {
+                                self.mission_editor.file_path = resp.path.clone();
+                                self.mission_editor.status_msg =
+                                    format!("Arquivo '{}' salvo com sucesso no host!", resp.path);
+                            } else {
+                                self.mission_editor.status_msg = resp.error.unwrap_or_else(|| {
+                                    "Erro ao salvar arquivo no host".to_string()
+                                });
+                            }
+                        }
+                    }
+                    "save_data_response" | "save_response" => {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::SaveMissionDataResponse,
+                        >(msg.payload)
+                        {
+                            if resp.success {
+                                self.mission_editor.status_msg =
+                                    "Conjunto de missões sincronizado com o host!".to_string();
+                            } else {
+                                self.mission_editor.status_msg =
+                                    format!("Erro ao sincronizar com o host: {}", resp.message);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
                 crate::net::protocol::Domain::Terminal => {
                     if msg.action == "list_terminals" {
-                        if let Ok(resp) = serde_json::from_value::<crate::net::protocol::TerminalsListResponse>(msg.payload) {
+                        if let Ok(resp) = serde_json::from_value::<
+                            crate::net::protocol::TerminalsListResponse,
+                        >(msg.payload)
+                        {
                             self.terminals_panel.tabs = resp.tabs;
                         }
                     } else if msg.action == "data" {
-                        if let Ok(data_msg) = serde_json::from_value::<crate::net::protocol::TerminalDataMessage>(msg.payload) {
-                            if let Some(tab) = self.terminals_panel.tabs.iter_mut().find(|t| t.id == data_msg.terminal_id) {
+                        if let Ok(data_msg) = serde_json::from_value::<
+                            crate::net::protocol::TerminalDataMessage,
+                        >(msg.payload)
+                        {
+                            if let Some(tab) = self
+                                .terminals_panel
+                                .tabs
+                                .iter_mut()
+                                .find(|t| t.id == data_msg.terminal_id)
+                            {
                                 tab.output_lines.push(data_msg.text);
                             }
                         }
@@ -493,11 +566,8 @@ impl App for MyApp {
                     });
 
                 // Subpainel inferior: Launchfiles
-                self.launchfiles_panel.ui(
-                    ui,
-                    &mut self.state,
-                    Some(&self.control_client),
-                );
+                self.launchfiles_panel
+                    .ui(ui, &mut self.state, Some(&self.control_client));
             });
 
         let right_max = (ui.available_width() - 40.0).clamp(40.0, 600.0);
@@ -522,10 +592,10 @@ impl App for MyApp {
                 self.rewire.show(ui, frame);
             }
             ViewMode::MissionEditor => {
-                self.mission_editor.ui(ui, self.config.zoom_speed, Some(&self.control_client));
+                self.mission_editor
+                    .ui(ui, self.config.zoom_speed, Some(&self.control_client));
                 self.config.mission_file_path = self.mission_editor.file_path.clone();
             }
         }
     }
-
 }

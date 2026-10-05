@@ -61,7 +61,9 @@ impl LaunchFile {
         if self.name.to_lowercase().contains(&q) || self.description.to_lowercase().contains(&q) {
             return true;
         }
-        self.children.iter().any(|child| child.matches_search(query))
+        self.children
+            .iter()
+            .any(|child| child.matches_search(query))
     }
 }
 
@@ -113,7 +115,12 @@ impl Default for LaunchfilesPanel {
 }
 
 impl LaunchfilesPanel {
-    pub fn ui(&mut self, ui: &mut Ui, state: &mut AppState, client: Option<&crate::net::client::ControlClient>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut AppState,
+        client: Option<&crate::net::client::ControlClient>,
+    ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
 
@@ -199,7 +206,16 @@ fn render_launch_package(
         .show(ui, |ui| {
             for file in &mut pkg.launch_files {
                 if force_show_all || file.matches_search(query) {
-                    render_launch_file(ui, &pkg_name, file, query, state, force_show_all, is_first_frame, client);
+                    render_launch_file(
+                        ui,
+                        &pkg_name,
+                        file,
+                        query,
+                        state,
+                        force_show_all,
+                        is_first_frame,
+                        client,
+                    );
                 }
             }
         });
@@ -270,40 +286,46 @@ fn render_launch_file(
                         // Botão de Parar (Stop) usando ícone do re_ui
                         if re_icon_button(ui, &re_ui::icons::PAUSE, "Parar execução").clicked() {
                             file.status = LaunchStatus::Stopped;
-                            state.increment_action(&format!("Parou {}", file.name));
+                            state.increment_action(format!("Parou {}", file.name));
                             if let Some(c) = client {
                                 c.send(crate::net::protocol::ControlMessage::new(
                                     crate::net::protocol::Domain::Launchfiles,
                                     "stop",
-                                    serde_json::to_value(crate::net::protocol::LaunchfileActionRequest {
-                                        package: pkg_name.to_string(),
-                                        filename: file.name.clone(),
-                                        action: "stop".to_string(),
-                                    }).unwrap_or_default(),
+                                    serde_json::to_value(
+                                        crate::net::protocol::LaunchfileActionRequest {
+                                            package: pkg_name.to_string(),
+                                            filename: file.name.clone(),
+                                            action: "stop".to_string(),
+                                        },
+                                    )
+                                    .unwrap_or_default(),
                                 ));
                             }
                         }
                     } else {
                         // Botão de Iniciar (Play) usando ícone do re_ui
-                        if re_icon_button(ui, &re_ui::icons::PLAY, "Iniciar launch file").clicked() {
+                        if re_icon_button(ui, &re_ui::icons::PLAY, "Iniciar launch file").clicked()
+                        {
                             file.status = LaunchStatus::Running;
-                            state.increment_action(&format!("Iniciou {}", file.name));
+                            state.increment_action(format!("Iniciou {}", file.name));
                             if let Some(c) = client {
                                 c.send(crate::net::protocol::ControlMessage::new(
                                     crate::net::protocol::Domain::Launchfiles,
                                     "start",
-                                    serde_json::to_value(crate::net::protocol::LaunchfileActionRequest {
-                                        package: pkg_name.to_string(),
-                                        filename: file.name.clone(),
-                                        action: "start".to_string(),
-                                    }).unwrap_or_default(),
+                                    serde_json::to_value(
+                                        crate::net::protocol::LaunchfileActionRequest {
+                                            package: pkg_name.to_string(),
+                                            filename: file.name.clone(),
+                                            action: "start".to_string(),
+                                        },
+                                    )
+                                    .unwrap_or_default(),
                                 ));
                             }
                         }
                     }
                 });
             });
-
 
             if !file.description.is_empty() {
                 ui.label(
@@ -364,8 +386,16 @@ pub fn create_mock_launchfiles() -> Vec<LaunchPackage> {
                     "Master XML launch file que agrupa subsistemas",
                 )
                 .with_children(vec![
-                    LaunchFile::new("sensors.launch.py", LaunchKind::Python, "Drivers de Lidar e Câmera"),
-                    LaunchFile::new("teleop.launch.py", LaunchKind::Python, "Interface de controle remoto via joystick"),
+                    LaunchFile::new(
+                        "sensors.launch.py",
+                        LaunchKind::Python,
+                        "Drivers de Lidar e Câmera",
+                    ),
+                    LaunchFile::new(
+                        "teleop.launch.py",
+                        LaunchKind::Python,
+                        "Interface de controle remoto via joystick",
+                    ),
                 ]),
             ],
         },

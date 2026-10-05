@@ -9,17 +9,12 @@ pub enum ShapeType {
     Circle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ActiveTool {
+    #[default]
     Select,
     AddPoint,
     AddObstacle(ObstacleKind, ShapeType),
-}
-
-impl Default for ActiveTool {
-    fn default() -> Self {
-        Self::Select
-    }
 }
 
 pub struct ToolBar;
@@ -92,36 +87,44 @@ impl ToolBar {
                     ui.separator();
 
                     if ui.button("Físico - Polígono").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Polygon);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Polygon);
                         ui.close();
                     }
                     if ui.button("Físico - Linhas").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Line);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Line);
                         ui.close();
                     }
                     if ui.button("Físico - Retângulo").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Rectangle);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Rectangle);
                         ui.close();
                     }
                     if ui.button("Físico - Círculo").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Circle);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Circle);
                         ui.close();
                     }
                     ui.separator();
                     if ui.button("Cosmético - Polígono").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Polygon);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Polygon);
                         ui.close();
                     }
                     if ui.button("Cosmético - Linhas").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Line);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Line);
                         ui.close();
                     }
                     if ui.button("Cosmético - Retângulo").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Rectangle);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Rectangle);
                         ui.close();
                     }
                     if ui.button("Cosmético - Círculo").clicked() {
-                        *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Circle);
+                        *active_tool =
+                            ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Circle);
                         ui.close();
                     }
                 });

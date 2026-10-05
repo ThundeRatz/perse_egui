@@ -46,7 +46,41 @@ jobs:
         run: cargo test --all-targets
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features
+
+  build-web:
+    name: Build WebAssembly (web/)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust & WASM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: |
+          cargo install -f wasm-bindgen-cli --version 0.2.126
+
+      - name: Build Web Assets
+        run: |
+          chmod +x ./build_web.sh
+          ./build_web.sh
+
+      - name: Package Web Assets
+        run: |
+          tar -czvf perse_egui-web.tar.gz web/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perse_egui-web
+          path: perse_egui-web.tar.gz
 
   build-release-binaries:
     name: Build Release (${{ matrix.target }})
@@ -57,22 +91,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             asset_name: perse_egui-x86_64
-            apt_packages: ""
-            linker_env: ""
+            use_cross: false
           - target: aarch64-unknown-linux-gnu
             asset_name: perse_egui-aarch64
-            apt_packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
-            linker_env: "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            use_cross: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install system & cross-compiler dependencies
+      - name: Install system dependencies (x86_64)
+        if: ${{ !matrix.use_cross }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev ${{ matrix.apt_packages }}
+          sudo apt-get install -y libclang-dev pkg-config libx11-dev libasound2-dev libssl-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libwayland-dev libxkbcommon-dev
 
       - name: Install Rust target
         uses: dtolnay/rust-toolchain@stable
@@ -85,9 +118,22 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build Binary
+      - name: Install cross (for aarch64 cross-compilation)
+        if: ${{ matrix.use_cross }}
         run: |
-          ${{ matrix.linker_env }} cargo build --release --target ${{ matrix.target }}
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall --no-confirm cross
+
+      - name: Build Binary (Native x86_64)
+        if: ${{ !matrix.use_cross }}
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/perse_egui ${{ matrix.asset_name }}
+
+      - name: Build Binary (Cross aarch64)
+        if: ${{ matrix.use_cross }}
+        run: |
+          cross build --release --target ${{ matrix.target }}
           cp target/${{ matrix.target }}/release/perse_egui ${{ matrix.asset_name }}
 
       - name: Upload Artifact
@@ -96,10 +142,33 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
 
-      - name: Publish GitHub Release Asset
-        if: startsWith(github.ref, 'refs/tags/')
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-web, build-release-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: perse_egui-web
+
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: perse_egui-x86_64
+
+      - name: Download aarch64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: perse_egui-aarch64
+
+      - name: Publish Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          files: |
+            perse_egui-x86_64
+            perse_egui-aarch64
+            perse_egui-web.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

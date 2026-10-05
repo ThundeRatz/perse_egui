@@ -122,11 +122,9 @@ impl Scope {
         if self.name.to_lowercase().contains(&q) {
             return true;
         }
-        if self
-            .parameters
-            .iter()
-            .any(|p| p.name.to_lowercase().contains(&q) || p.description.to_lowercase().contains(&q))
-        {
+        if self.parameters.iter().any(|p| {
+            p.name.to_lowercase().contains(&q) || p.description.to_lowercase().contains(&q)
+        }) {
             return true;
         }
         self.sub_scopes.iter().any(|sub| sub.matches_search(query))
@@ -137,14 +135,14 @@ impl Scope {
             return false;
         }
         let q = query.to_lowercase();
-        if self
-            .parameters
-            .iter()
-            .any(|p| p.name.to_lowercase().contains(&q) || p.description.to_lowercase().contains(&q))
-        {
+        if self.parameters.iter().any(|p| {
+            p.name.to_lowercase().contains(&q) || p.description.to_lowercase().contains(&q)
+        }) {
             return true;
         }
-        self.sub_scopes.iter().any(|sub| sub.has_parameter_match(query))
+        self.sub_scopes
+            .iter()
+            .any(|sub| sub.has_parameter_match(query))
     }
 }
 
@@ -282,9 +280,17 @@ impl ParametersPanel {
         for remote_pkg in remote_packages {
             if let Some(local_pkg) = self.packages.iter_mut().find(|p| p.name == remote_pkg.name) {
                 for remote_file in remote_pkg.files {
-                    if let Some(local_file) = local_pkg.files.iter_mut().find(|f| f.filename == remote_file.filename) {
+                    if let Some(local_file) = local_pkg
+                        .files
+                        .iter_mut()
+                        .find(|f| f.filename == remote_file.filename)
+                    {
                         for mut remote_scope in remote_file.scopes {
-                            if let Some(local_scope) = local_file.scopes.iter_mut().find(|s| s.name == remote_scope.name) {
+                            if let Some(local_scope) = local_file
+                                .scopes
+                                .iter_mut()
+                                .find(|s| s.name == remote_scope.name)
+                            {
                                 preserve_scope_edits(local_scope, &mut remote_scope);
                                 *local_scope = remote_scope;
                             } else {
@@ -301,7 +307,13 @@ impl ParametersPanel {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, _state: &AppState, color_hierarchy: bool, client: Option<&crate::net::client::ControlClient>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        _state: &AppState,
+        color_hierarchy: bool,
+        client: Option<&crate::net::client::ControlClient>,
+    ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
 
@@ -327,7 +339,8 @@ impl ParametersPanel {
                         serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
                             package: None,
                             packages: self.packages.clone(),
-                        }).unwrap_or_default(),
+                        })
+                        .unwrap_or_default(),
                     ));
                 }
             }
@@ -385,7 +398,8 @@ impl ParametersPanel {
                         serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
                             package: None,
                             packages: self.packages.clone(),
-                        }).unwrap_or_default(),
+                        })
+                        .unwrap_or_default(),
                     ));
                 }
             }
@@ -438,7 +452,11 @@ impl ParametersPanel {
 
 fn preserve_scope_edits(local: &Scope, remote: &mut Scope) {
     for remote_param in &mut remote.parameters {
-        if let Some(local_param) = local.parameters.iter().find(|p| p.name == remote_param.name) {
+        if let Some(local_param) = local
+            .parameters
+            .iter()
+            .find(|p| p.name == remote_param.name)
+        {
             if local_param.is_modified() {
                 remote_param.edited_value = local_param.edited_value.clone();
                 remote_param.array_text_buf = local_param.array_text_buf.clone();
@@ -474,7 +492,10 @@ fn render_package(
     let open_override = if is_first_frame { Some(true) } else { None };
 
     let header_text = if color_hierarchy {
-        RichText::new(title).strong().size(13.0).color(Color32::from_rgb(130, 200, 255))
+        RichText::new(title)
+            .strong()
+            .size(13.0)
+            .color(Color32::from_rgb(130, 200, 255))
     } else {
         RichText::new(title).strong().size(13.0)
     };
@@ -487,7 +508,15 @@ fn render_package(
             ui.spacing_mut().item_spacing.y = 2.0;
             for file in &mut pkg.files {
                 if force_show_all || file.matches_search(query) {
-                    render_param_file(ui, &pkg.name, file, query, force_show_all, is_first_frame, color_hierarchy);
+                    render_param_file(
+                        ui,
+                        &pkg.name,
+                        file,
+                        query,
+                        force_show_all,
+                        is_first_frame,
+                        color_hierarchy,
+                    );
                 }
             }
         });
@@ -519,7 +548,10 @@ fn render_param_file(
     let open_override = if is_first_frame { Some(true) } else { None };
 
     let header_text = if color_hierarchy {
-        RichText::new(title).strong().size(12.5).color(Color32::from_rgb(240, 200, 110))
+        RichText::new(title)
+            .strong()
+            .size(12.5)
+            .color(Color32::from_rgb(240, 200, 110))
     } else {
         RichText::new(title).color(Color32::from_gray(200))
     };
@@ -532,7 +564,16 @@ fn render_param_file(
             ui.spacing_mut().item_spacing.y = 2.0;
             for scope in &mut file.scopes {
                 if force_show_all || scope.matches_search(query) {
-                    render_scope(ui, &path_prefix, scope, query, 0, force_show_all, is_first_frame, color_hierarchy);
+                    render_scope(
+                        ui,
+                        &path_prefix,
+                        scope,
+                        query,
+                        0,
+                        force_show_all,
+                        is_first_frame,
+                        color_hierarchy,
+                    );
                 }
             }
         });
@@ -576,7 +617,10 @@ fn render_scope(
     let open_override = if is_first_frame { Some(true) } else { None };
 
     let header_text = if color_hierarchy {
-        RichText::new(title).strong().size(12.0).color(Color32::from_rgb(195, 160, 245))
+        RichText::new(title)
+            .strong()
+            .size(12.0)
+            .color(Color32::from_rgb(195, 160, 245))
     } else {
         RichText::new(title).size(12.5)
     };
@@ -675,16 +719,15 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: boo
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         render_value_input(ui, param);
 
-                        if is_modified {
-                            if crate::panels::components::re_icon_button(
+                        if is_modified
+                            && crate::panels::components::re_icon_button(
                                 ui,
                                 &re_ui::icons::RESET,
                                 "Desfazer alteração",
                             )
                             .clicked()
-                            {
-                                param.discard();
-                            }
+                        {
+                            param.discard();
                         }
                     });
                 });
@@ -717,10 +760,12 @@ fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
             ui.add(egui::TextEdit::singleline(val).desired_width(110.0));
         }
         ParameterValue::ByteArray(ref mut vec) => {
-            let mut text = param
-                .array_text_buf
-                .clone()
-                .unwrap_or_else(|| vec.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", "));
+            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
+                vec.iter()
+                    .map(|b| b.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
             if ui
                 .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
                 .changed()
@@ -741,10 +786,12 @@ fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
             });
         }
         ParameterValue::IntArray(ref mut vec) => {
-            let mut text = param
-                .array_text_buf
-                .clone()
-                .unwrap_or_else(|| vec.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
+            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
+                vec.iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
             if ui
                 .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
                 .changed()
@@ -758,10 +805,12 @@ fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
             }
         }
         ParameterValue::FloatArray(ref mut vec) => {
-            let mut text = param
-                .array_text_buf
-                .clone()
-                .unwrap_or_else(|| vec.iter().map(|v| format!("{:.2}", v)).collect::<Vec<_>>().join(", "));
+            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
+                vec.iter()
+                    .map(|v| format!("{:.2}", v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
             if ui
                 .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
                 .changed()
@@ -806,21 +855,31 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
                     // Exemplo 1: nav -> params -> planner (caminho único -> simplifica para nav/params/planner)
                     Scope {
                         name: "nav".into(),
-                        sub_scopes: vec![
-                            Scope {
-                                name: "params".into(),
-                                sub_scopes: vec![Scope {
-                                    name: "planner".into(),
-                                    sub_scopes: vec![],
-                                    parameters: vec![
-                                        Parameter::new("speed", "Velocidade linear máxima (m/s)", ParameterValue::Float(1.5)),
-                                        Parameter::new("max_accel", "Aceleração máxima (m/s²)", ParameterValue::Float(0.8)),
-                                        Parameter::new("enable_recovery", "Ativar comportamentos de recuperação", ParameterValue::Bool(true)),
-                                    ],
-                                }],
-                                parameters: vec![],
-                            },
-                        ],
+                        sub_scopes: vec![Scope {
+                            name: "params".into(),
+                            sub_scopes: vec![Scope {
+                                name: "planner".into(),
+                                sub_scopes: vec![],
+                                parameters: vec![
+                                    Parameter::new(
+                                        "speed",
+                                        "Velocidade linear máxima (m/s)",
+                                        ParameterValue::Float(1.5),
+                                    ),
+                                    Parameter::new(
+                                        "max_accel",
+                                        "Aceleração máxima (m/s²)",
+                                        ParameterValue::Float(0.8),
+                                    ),
+                                    Parameter::new(
+                                        "enable_recovery",
+                                        "Ativar comportamentos de recuperação",
+                                        ParameterValue::Bool(true),
+                                    ),
+                                ],
+                            }],
+                            parameters: vec![],
+                        }],
                         parameters: vec![],
                     },
                     // Exemplo 2: nav_multi -> (params -> planner) e config (ramificado -> nav_multi / params/planner / config)
@@ -832,18 +891,22 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
                                 sub_scopes: vec![Scope {
                                     name: "planner".into(),
                                     sub_scopes: vec![],
-                                    parameters: vec![
-                                        Parameter::new("planner_type", "Tipo de algoritmo planejador", ParameterValue::String("NavFn".into())),
-                                    ],
+                                    parameters: vec![Parameter::new(
+                                        "planner_type",
+                                        "Tipo de algoritmo planejador",
+                                        ParameterValue::String("NavFn".into()),
+                                    )],
                                 }],
                                 parameters: vec![],
                             },
                             Scope {
                                 name: "config".into(),
                                 sub_scopes: vec![],
-                                parameters: vec![
-                                    Parameter::new("tolerance", "Tolerância de chegada ao objetivo (m)", ParameterValue::Float(0.05)),
-                                ],
+                                parameters: vec![Parameter::new(
+                                    "tolerance",
+                                    "Tolerância de chegada ao objetivo (m)",
+                                    ParameterValue::Float(0.05),
+                                )],
                             },
                         ],
                         parameters: vec![],
@@ -852,9 +915,21 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
                         name: "amcl".into(),
                         sub_scopes: vec![],
                         parameters: vec![
-                            Parameter::new("min_particles", "Mínimo de partículas no filtro", ParameterValue::Int(500)),
-                            Parameter::new("max_particles", "Máximo de partículas no filtro", ParameterValue::Int(2000)),
-                            Parameter::new("initial_pose", "Posição inicial x, y, theta", ParameterValue::FloatArray(vec![0.0, 0.0, 0.0])),
+                            Parameter::new(
+                                "min_particles",
+                                "Mínimo de partículas no filtro",
+                                ParameterValue::Int(500),
+                            ),
+                            Parameter::new(
+                                "max_particles",
+                                "Máximo de partículas no filtro",
+                                ParameterValue::Int(2000),
+                            ),
+                            Parameter::new(
+                                "initial_pose",
+                                "Posição inicial x, y, theta",
+                                ParameterValue::FloatArray(vec![0.0, 0.0, 0.0]),
+                            ),
                         ],
                     },
                 ],
@@ -868,12 +943,39 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
                     name: "diff_drive_controller".into(),
                     sub_scopes: vec![],
                     parameters: vec![
-                        Parameter::new("wheel_separation", "Distância entre rodas (m)", ParameterValue::Float(0.45)),
-                        Parameter::new("wheel_radius", "Raio das rodas (m)", ParameterValue::Float(0.10)),
-                        Parameter::new("joint_names", "Nomes das juntas de tração", ParameterValue::StringArray(vec!["left_wheel_joint".into(), "right_wheel_joint".into()])),
-                        Parameter::new("can_device_ids", "IDs dos controladores CAN", ParameterValue::ByteArray(vec![0x01, 0x02, 0x03])),
-                        Parameter::new("encoder_counts", "Pulsos de encoder por rotação [esq, dir]", ParameterValue::IntArray(vec![4096, 4096])),
-                        Parameter::new("wheel_inverted", "Inversão dos motores [esquerda, direita]", ParameterValue::BoolArray(vec![false, true])),
+                        Parameter::new(
+                            "wheel_separation",
+                            "Distância entre rodas (m)",
+                            ParameterValue::Float(0.45),
+                        ),
+                        Parameter::new(
+                            "wheel_radius",
+                            "Raio das rodas (m)",
+                            ParameterValue::Float(0.10),
+                        ),
+                        Parameter::new(
+                            "joint_names",
+                            "Nomes das juntas de tração",
+                            ParameterValue::StringArray(vec![
+                                "left_wheel_joint".into(),
+                                "right_wheel_joint".into(),
+                            ]),
+                        ),
+                        Parameter::new(
+                            "can_device_ids",
+                            "IDs dos controladores CAN",
+                            ParameterValue::ByteArray(vec![0x01, 0x02, 0x03]),
+                        ),
+                        Parameter::new(
+                            "encoder_counts",
+                            "Pulsos de encoder por rotação [esq, dir]",
+                            ParameterValue::IntArray(vec![4096, 4096]),
+                        ),
+                        Parameter::new(
+                            "wheel_inverted",
+                            "Inversão dos motores [esquerda, direita]",
+                            ParameterValue::BoolArray(vec![false, true]),
+                        ),
                     ],
                 }],
             }],
@@ -886,10 +988,26 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
                     name: "rplidar_node".into(),
                     sub_scopes: vec![],
                     parameters: vec![
-                        Parameter::new("serial_port", "Porta serial do Lidar", ParameterValue::String("/dev/ttyUSB0".into())),
-                        Parameter::new("baud_rate", "Taxa de transmissão", ParameterValue::Int(115200)),
-                        Parameter::new("frame_id", "Frame de referência", ParameterValue::String("laser_frame".into())),
-                        Parameter::new("angle_compensate", "Compensação de ângulo", ParameterValue::Bool(true)),
+                        Parameter::new(
+                            "serial_port",
+                            "Porta serial do Lidar",
+                            ParameterValue::String("/dev/ttyUSB0".into()),
+                        ),
+                        Parameter::new(
+                            "baud_rate",
+                            "Taxa de transmissão",
+                            ParameterValue::Int(115200),
+                        ),
+                        Parameter::new(
+                            "frame_id",
+                            "Frame de referência",
+                            ParameterValue::String("laser_frame".into()),
+                        ),
+                        Parameter::new(
+                            "angle_compensate",
+                            "Compensação de ângulo",
+                            ParameterValue::Bool(true),
+                        ),
                     ],
                 }],
             }],
@@ -907,17 +1025,16 @@ mod tests {
         assert_eq!(panel.count_modified(), 0);
 
         // Modify a parameter value
-        let param = &mut panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
+        let param =
+            &mut panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
         param.edited_value = ParameterValue::Float(2.5);
         assert!(param.is_modified());
         assert_eq!(panel.count_modified(), 1);
 
         panel.apply_all();
         assert_eq!(panel.count_modified(), 0);
-        let param_after = &panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
+        let param_after =
+            &panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
         assert_eq!(param_after.saved_value, ParameterValue::Float(2.5));
     }
 }
-
-
-

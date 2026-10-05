@@ -1,6 +1,6 @@
+use crate::net::protocol::ControlMessage;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use crate::net::protocol::ControlMessage;
 
 #[cfg(not(target_arch = "wasm32"))]
 use futures_util::{SinkExt, StreamExt};
@@ -135,13 +135,27 @@ impl ControlClient {
 
                         // Ao conectar, envia requisição de dados iniciais para sincronizar painéis
                         let initial_reqs = vec![
-                            ControlMessage::new(crate::net::protocol::Domain::Parameters, "get_tree", serde_json::Value::Null),
-                            ControlMessage::new(crate::net::protocol::Domain::Launchfiles, "get_list", serde_json::Value::Null),
-                            ControlMessage::new(crate::net::protocol::Domain::Mission, "get_data", serde_json::Value::Null),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Parameters,
+                                "get_tree",
+                                serde_json::Value::Null,
+                            ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Launchfiles,
+                                "get_list",
+                                serde_json::Value::Null,
+                            ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Mission,
+                                "get_data",
+                                serde_json::Value::Null,
+                            ),
                         ];
                         for req in initial_reqs {
                             if let Ok(j) = serde_json::to_string(&req) {
-                                let _ = ws_stream.send(tokio_tungstenite::tungstenite::Message::Text(j.into())).await;
+                                let _ = ws_stream
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(j.into()))
+                                    .await;
                             }
                         }
 
@@ -188,7 +202,10 @@ impl ControlClient {
                 handle.spawn(runner);
             } else {
                 std::thread::spawn(move || {
-                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
                         rt.block_on(runner);
                     }
                 });
@@ -212,13 +229,28 @@ impl ControlClient {
                         if let Ok(mut st) = status_msg_open.lock() {
                             *st = format!("Conectado a {}", url_for_open);
                         }
-                        re_log::info!("ControlClient (WASM) conectado com sucesso a {}", url_for_open);
+                        re_log::info!(
+                            "ControlClient (WASM) conectado com sucesso a {}",
+                            url_for_open
+                        );
 
                         // Requisitar dados iniciais dos painéis
                         let initial_reqs = vec![
-                            ControlMessage::new(crate::net::protocol::Domain::Parameters, "get_tree", serde_json::Value::Null),
-                            ControlMessage::new(crate::net::protocol::Domain::Launchfiles, "get_list", serde_json::Value::Null),
-                            ControlMessage::new(crate::net::protocol::Domain::Mission, "get_data", serde_json::Value::Null),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Parameters,
+                                "get_tree",
+                                serde_json::Value::Null,
+                            ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Launchfiles,
+                                "get_list",
+                                serde_json::Value::Null,
+                            ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Mission,
+                                "get_data",
+                                serde_json::Value::Null,
+                            ),
                         ];
                         for req in initial_reqs {
                             if let Ok(j) = serde_json::to_string(&req) {
@@ -230,15 +262,16 @@ impl ControlClient {
                     onopen.forget();
 
                     let incoming = self.incoming_queue.clone();
-                    let onmessage = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
-                        if let Some(txt) = e.data().as_string() {
-                            if let Ok(ctrl_msg) = serde_json::from_str::<ControlMessage>(&txt) {
-                                if let Ok(mut q) = incoming.lock() {
-                                    q.push(ctrl_msg);
+                    let onmessage =
+                        Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
+                            if let Some(txt) = e.data().as_string() {
+                                if let Ok(ctrl_msg) = serde_json::from_str::<ControlMessage>(&txt) {
+                                    if let Ok(mut q) = incoming.lock() {
+                                        q.push(ctrl_msg);
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
                     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
                     onmessage.forget();
 

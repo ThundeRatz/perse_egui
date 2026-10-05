@@ -69,7 +69,10 @@ impl TerminalsPanel {
                         c.send(crate::net::protocol::ControlMessage::new(
                             crate::net::protocol::Domain::Terminal,
                             "create",
-                            serde_json::to_value(crate::net::protocol::TerminalCreateRequest { title }).unwrap_or_default(),
+                            serde_json::to_value(crate::net::protocol::TerminalCreateRequest {
+                                title,
+                            })
+                            .unwrap_or_default(),
                         ));
                     }
                 }
@@ -122,7 +125,8 @@ impl TerminalsPanel {
                                 "close",
                                 serde_json::to_value(crate::net::protocol::TerminalCloseRequest {
                                     terminal_id: closed_id,
-                                }).unwrap_or_default(),
+                                })
+                                .unwrap_or_default(),
                             ));
                         }
                     }
@@ -145,14 +149,18 @@ impl TerminalsPanel {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if tab.is_running {
-                        if re_icon_button(ui, &re_ui::icons::PAUSE, "Interromper processo (SIGINT)").clicked() {
+                        if re_icon_button(ui, &re_ui::icons::PAUSE, "Interromper processo (SIGINT)")
+                            .clicked()
+                        {
                             tab.is_running = false;
-                            tab.output_lines.push("[WARN] [sys]: Processo interrompido pelo usuário.".into());
+                            tab.output_lines
+                                .push("[WARN] [sys]: Processo interrompido pelo usuário.".into());
                         }
                     } else {
                         if re_icon_button(ui, &re_ui::icons::PLAY, "Reiniciar processo").clicked() {
                             tab.is_running = true;
-                            tab.output_lines.push("[INFO] [sys]: Processo reiniciado.".into());
+                            tab.output_lines
+                                .push("[INFO] [sys]: Processo reiniciado.".into());
                         }
                     }
 
@@ -220,7 +228,11 @@ impl TerminalsPanel {
             })
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("$").strong().color(Color32::from_rgb(50, 200, 100)));
+                    ui.label(
+                        RichText::new("$")
+                            .strong()
+                            .color(Color32::from_rgb(50, 200, 100)),
+                    );
 
                     let available_for_text =
                         (ui.available_width() - 60.0 - ui.spacing().item_spacing.x).max(30.0);
@@ -231,25 +243,26 @@ impl TerminalsPanel {
                             .desired_width(available_for_text),
                     );
 
-                    if (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                        || ui.small_button("Enviar").clicked()
+                    if ((response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || ui.small_button("Enviar").clicked())
+                        && !self.command_input.trim().is_empty()
                     {
-                        if !self.command_input.trim().is_empty() {
-                            let cmd = self.command_input.clone();
-                            tab.output_lines.push(format!("$ {}", cmd));
-                            tab.output_lines.push(format!("[INFO] [exec]: Executando '{}'...", cmd));
-                            self.command_input.clear();
-                            if let Some(c) = client {
-                                c.send(crate::net::protocol::ControlMessage::new(
-                                    crate::net::protocol::Domain::Terminal,
-                                    "data",
-                                    serde_json::to_value(crate::net::protocol::TerminalDataMessage {
-                                        terminal_id: tab.id,
-                                        text: cmd,
-                                        is_input: true,
-                                    }).unwrap_or_default(),
-                                ));
-                            }
+                        let cmd = self.command_input.clone();
+                        tab.output_lines.push(format!("$ {}", cmd));
+                        tab.output_lines
+                            .push(format!("[INFO] [exec]: Executando '{}'...", cmd));
+                        self.command_input.clear();
+                        if let Some(c) = client {
+                            c.send(crate::net::protocol::ControlMessage::new(
+                                crate::net::protocol::Domain::Terminal,
+                                "data",
+                                serde_json::to_value(crate::net::protocol::TerminalDataMessage {
+                                    terminal_id: tab.id,
+                                    text: cmd,
+                                    is_input: true,
+                                })
+                                .unwrap_or_default(),
+                            ));
                         }
                     }
                 });
@@ -343,15 +356,10 @@ fn render_tab_pill(
         Color32::from_gray(170)
     };
 
-    let btn = egui::Button::new(
-        RichText::new(text)
-            .strong()
-            .size(11.5)
-            .color(text_color),
-    )
-    .fill(bg)
-    .stroke(stroke)
-    .corner_radius(4.0);
+    let btn = egui::Button::new(RichText::new(text).strong().size(11.5).color(text_color))
+        .fill(bg)
+        .stroke(stroke)
+        .corner_radius(4.0);
 
     let response = ui.add(btn);
     let mut clicked_tab = false;

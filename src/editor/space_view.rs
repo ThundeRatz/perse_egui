@@ -6,16 +6,9 @@ use re_viewer_context::{
     ViewSystemExecutionError, ViewSystemRegistrator, ViewerContext,
 };
 
+#[derive(Default)]
 pub struct MissionSpaceViewState {
     pub editor: crate::editor::MissionEditor,
-}
-
-impl Default for MissionSpaceViewState {
-    fn default() -> Self {
-        Self {
-            editor: crate::editor::MissionEditor::default(),
-        }
-    }
 }
 
 impl ViewState for MissionSpaceViewState {

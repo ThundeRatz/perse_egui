@@ -44,10 +44,10 @@ impl Default for ViewVisibilityOptions {
 
 #[derive(Debug, Clone)]
 pub struct CanvasState {
-    pub pan: Vec2,                      // Posição no mundo (m) correspondente ao centro da tela
-    pub zoom: f32,                     // Pixels por metro
+    pub pan: Vec2, // Posição no mundo (m) correspondente ao centro da tela
+    pub zoom: f32, // Pixels por metro
     pub drag_target: Option<Selection>, // Objeto capturado no início do clique/arraste
-    pub poly_building: Vec<[f32; 2]>,   // Vértices temporários para criação de polígono
+    pub poly_building: Vec<[f32; 2]>, // Vértices temporários para criação de polígono
     pub view_options: ViewVisibilityOptions, // Opções de visibilidade dos elementos gráficos
     pub is_display_options_open: bool, // Estado expandido/recolhido da janela Exibição
     pub box_select_start: Option<Vec2>, // Posição (mundo) onde a seleção por caixa começou
@@ -73,7 +73,10 @@ impl CanvasState {
         let center = rect.center();
         let delta = world_pos - self.pan;
         // No mundo: +Y é para cima. Na tela egui: +Y é para baixo.
-        pos2(center.x + delta.x * self.zoom, center.y - delta.y * self.zoom)
+        pos2(
+            center.x + delta.x * self.zoom,
+            center.y - delta.y * self.zoom,
+        )
     }
 
     /// Converte Coordenada da Tela (pixels) -> Coordenada do Mundo (m)
@@ -108,7 +111,11 @@ impl EditorCanvas {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
         if response.hovered() && scroll_delta != 0.0 {
             let step = zoom_speed.clamp(0.005, 0.2);
-            let zoom_factor = if scroll_delta > 0.0 { 1.0 + step } else { 1.0 - step };
+            let zoom_factor = if scroll_delta > 0.0 {
+                1.0 + step
+            } else {
+                1.0 - step
+            };
             if let Some(hover_pos) = response.hover_pos() {
                 let world_before = state.screen_to_world(hover_pos, rect);
                 state.zoom = (state.zoom * zoom_factor).clamp(5.0, 500.0);
@@ -152,13 +159,15 @@ impl EditorCanvas {
             ui.input(|i| {
                 if i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::Delete) {
                     if !selection.is_empty() {
-                        let pts_to_remove: Vec<usize> = selection.points.iter().copied().rev().collect();
+                        let pts_to_remove: Vec<usize> =
+                            selection.points.iter().copied().rev().collect();
                         for p in pts_to_remove {
                             if p < data.points.len() {
                                 data.points.remove(p);
                             }
                         }
-                        let obs_to_remove: Vec<usize> = selection.obstacles.iter().copied().rev().collect();
+                        let obs_to_remove: Vec<usize> =
+                            selection.obstacles.iter().copied().rev().collect();
                         for o in obs_to_remove {
                             if o < data.obstacles.len() {
                                 data.obstacles.remove(o);
@@ -173,7 +182,8 @@ impl EditorCanvas {
                     *active_tool = ActiveTool::Select;
                     state.poly_building.clear();
                 } else if i.key_pressed(egui::Key::P) {
-                    *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Polygon);
+                    *active_tool =
+                        ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Polygon);
                     state.poly_building.clear();
                 } else if i.key_pressed(egui::Key::L) {
                     *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Line);
@@ -182,10 +192,12 @@ impl EditorCanvas {
                     *active_tool = ActiveTool::AddObstacle(ObstacleKind::Cosmetic, ShapeType::Line);
                     state.poly_building.clear();
                 } else if i.key_pressed(egui::Key::R) {
-                    *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Rectangle);
+                    *active_tool =
+                        ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Rectangle);
                     state.poly_building.clear();
                 } else if i.key_pressed(egui::Key::C) {
-                    *active_tool = ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Circle);
+                    *active_tool =
+                        ActiveTool::AddObstacle(ObstacleKind::Physical, ShapeType::Circle);
                     state.poly_building.clear();
                 }
             });
@@ -196,18 +208,12 @@ impl EditorCanvas {
         let mouse_world = state.screen_to_world(mouse_pos, rect);
 
         // Regiões de UI flutuantes no canvas que não devem disparar ações de clique no mundo
-        let island_rect = Rect::from_min_size(
-            rect.left_bottom() + vec2(16.0, -56.0),
-            vec2(320.0, 40.0),
-        );
-        let indicator_rect = Rect::from_min_size(
-            rect.left_bottom() + vec2(360.0, -48.0),
-            vec2(190.0, 24.0),
-        );
-        let display_options_rect = Rect::from_min_size(
-            rect.right_top() + vec2(-210.0, 5.0),
-            vec2(205.0, 200.0),
-        );
+        let island_rect =
+            Rect::from_min_size(rect.left_bottom() + vec2(16.0, -56.0), vec2(320.0, 40.0));
+        let indicator_rect =
+            Rect::from_min_size(rect.left_bottom() + vec2(360.0, -48.0), vec2(190.0, 24.0));
+        let display_options_rect =
+            Rect::from_min_size(rect.right_top() + vec2(-210.0, 5.0), vec2(205.0, 200.0));
 
         let is_over_ui_overlay = island_rect.contains(mouse_pos)
             || indicator_rect.contains(mouse_pos)
@@ -225,7 +231,7 @@ impl EditorCanvas {
                 ActiveTool::AddObstacle(kind, ShapeType::Polygon) => {
                     if state.poly_building.len() >= 3 {
                         let id = format!("obs_{}", data.obstacles.len() + 1);
-                        let obs = Obstacle::new_polygon(id, kind.clone(), state.poly_building.clone());
+                        let obs = Obstacle::new_polygon(id, *kind, state.poly_building.clone());
                         data.obstacles.push(obs);
                         selection.select_single_obstacle(data.obstacles.len() - 1);
                     }
@@ -235,7 +241,7 @@ impl EditorCanvas {
                 ActiveTool::AddObstacle(kind, ShapeType::Line) => {
                     if state.poly_building.len() >= 2 {
                         let id = format!("obs_{}", data.obstacles.len() + 1);
-                        let obs = Obstacle::new_line(id, kind.clone(), state.poly_building.clone());
+                        let obs = Obstacle::new_line(id, *kind, state.poly_building.clone());
                         data.obstacles.push(obs);
                         selection.select_single_obstacle(data.obstacles.len() - 1);
                     }
@@ -249,7 +255,11 @@ impl EditorCanvas {
         let primary_pressed = ui.input(|i| i.pointer.primary_pressed());
         let primary_released = ui.input(|i| i.pointer.primary_released());
 
-        if primary_pressed && response.hovered() && !is_over_ui_overlay && !(is_middle_drag || is_right_drag) {
+        if primary_pressed
+            && response.hovered()
+            && !is_over_ui_overlay
+            && !(is_middle_drag || is_right_drag)
+        {
             let shift_pressed = ui.input(|i| i.modifiers.shift);
             match active_tool {
                 ActiveTool::Select => {
@@ -260,7 +270,8 @@ impl EditorCanvas {
                     // 1. Hit test nos vértices de qualquer obstáculo polígono/linha
                     for (i, obs) in data.obstacles.iter().enumerate() {
                         match &obs.shape {
-                            ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => {
+                            ObstacleShape::Polygon { vertices }
+                            | ObstacleShape::Line { vertices } => {
                                 for (v_idx, v) in vertices.iter().enumerate() {
                                     let v_screen = state.world_to_screen(vec2(v[0], v[1]), rect);
                                     if mouse_pos.distance(v_screen) <= 12.0 {
@@ -282,11 +293,12 @@ impl EditorCanvas {
                             let pt_screen = state.world_to_screen(vec2(pt.x, pt.y), rect);
                             let is_already_selected = selection.contains_point(i);
 
-                            let hit_radius = if is_already_selected && state.view_options.show_margins {
-                                14.0_f32.max(pt.get_margin() * state.zoom)
-                            } else {
-                                14.0
-                            };
+                            let hit_radius =
+                                if is_already_selected && state.view_options.show_margins {
+                                    14.0_f32.max(pt.get_margin() * state.zoom)
+                                } else {
+                                    14.0
+                                };
 
                             if mouse_pos.distance(pt_screen) <= hit_radius {
                                 hit_point = Some(i);
@@ -348,16 +360,17 @@ impl EditorCanvas {
                 }
                 ActiveTool::AddPoint => {
                     let new_pt = MissionPoint::new(mouse_world.x, mouse_world.y);
-                    let insert_idx = if selection.points.len() == 1 && selection.obstacles.is_empty() {
-                        let sel_idx = *selection.points.iter().next().unwrap();
-                        if sel_idx < data.points.len() {
-                            sel_idx + 1
+                    let insert_idx =
+                        if selection.points.len() == 1 && selection.obstacles.is_empty() {
+                            let sel_idx = *selection.points.iter().next().unwrap();
+                            if sel_idx < data.points.len() {
+                                sel_idx + 1
+                            } else {
+                                data.points.len()
+                            }
                         } else {
                             data.points.len()
-                        }
-                    } else {
-                        data.points.len()
-                    };
+                        };
 
                     if insert_idx < data.points.len() {
                         data.points.insert(insert_idx, new_pt);
@@ -378,7 +391,8 @@ impl EditorCanvas {
                             );
                             if mouse_pos.distance(first_screen) <= 15.0 {
                                 let id = format!("obs_{}", data.obstacles.len() + 1);
-                                let obs = Obstacle::new_polygon(id, kind.clone(), state.poly_building.clone());
+                                let obs =
+                                    Obstacle::new_polygon(id, *kind, state.poly_building.clone());
                                 data.obstacles.push(obs);
                                 state.poly_building.clear();
                                 selection.select_single_obstacle(data.obstacles.len() - 1);
@@ -395,14 +409,22 @@ impl EditorCanvas {
                     }
                     ShapeType::Rectangle => {
                         let id = format!("obs_{}", data.obstacles.len() + 1);
-                        let obs = Obstacle::new_rectangle(id, kind.clone(), mouse_world.x, mouse_world.y, 2.0, 1.5);
+                        let obs = Obstacle::new_rectangle(
+                            id,
+                            *kind,
+                            mouse_world.x,
+                            mouse_world.y,
+                            2.0,
+                            1.5,
+                        );
                         data.obstacles.push(obs);
                         selection.select_single_obstacle(data.obstacles.len() - 1);
                         *active_tool = ActiveTool::Select;
                     }
                     ShapeType::Circle => {
                         let id = format!("obs_{}", data.obstacles.len() + 1);
-                        let obs = Obstacle::new_circle(id, kind.clone(), [mouse_world.x, mouse_world.y], 1.0);
+                        let obs =
+                            Obstacle::new_circle(id, *kind, [mouse_world.x, mouse_world.y], 1.0);
                         data.obstacles.push(obs);
                         selection.select_single_obstacle(data.obstacles.len() - 1);
                         *active_tool = ActiveTool::Select;
@@ -412,15 +434,21 @@ impl EditorCanvas {
         }
 
         // Arrastar elemento capturado
-        if response.dragged_by(egui::PointerButton::Primary) && matches!(active_tool, ActiveTool::Select) {
-            let delta_world = vec2(response.drag_delta().x / state.zoom, -response.drag_delta().y / state.zoom);
+        if response.dragged_by(egui::PointerButton::Primary)
+            && matches!(active_tool, ActiveTool::Select)
+        {
+            let delta_world = vec2(
+                response.drag_delta().x / state.zoom,
+                -response.drag_delta().y / state.zoom,
+            );
 
             if let Some(ref target) = state.drag_target {
                 if let Some((obs_idx, v_idx)) = target.obstacle_vertex {
                     if !state.view_options.lock_obstacles {
                         if let Some(obs) = data.obstacles.get_mut(obs_idx) {
                             match &mut obs.shape {
-                                ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => {
+                                ObstacleShape::Polygon { vertices }
+                                | ObstacleShape::Line { vertices } => {
                                     if let Some(v) = vertices.get_mut(v_idx) {
                                         v[0] += delta_world.x;
                                         v[1] += delta_world.y;
@@ -441,7 +469,8 @@ impl EditorCanvas {
                         for &o_idx in &target.obstacles {
                             if let Some(obs) = data.obstacles.get_mut(o_idx) {
                                 match &mut obs.shape {
-                                    ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => {
+                                    ObstacleShape::Polygon { vertices }
+                                    | ObstacleShape::Line { vertices } => {
                                         for v in vertices.iter_mut() {
                                             v[0] += delta_world.x;
                                             v[1] += delta_world.y;
@@ -532,8 +561,16 @@ impl EditorCanvas {
                     ui.set_height(20.0);
 
                     // 1. Esquerda: Ícone de recolher/expandir janela de Exibição
-                    let collapse_label = if state.is_display_options_open { "⏷" } else { "⏵" };
-                    if ui.small_button(collapse_label).on_hover_text("Recolher / Expandir Exibição").clicked() {
+                    let collapse_label = if state.is_display_options_open {
+                        "⏷"
+                    } else {
+                        "⏵"
+                    };
+                    if ui
+                        .small_button(collapse_label)
+                        .on_hover_text("Recolher / Expandir Exibição")
+                        .clicked()
+                    {
                         state.is_display_options_open = !state.is_display_options_open;
                     }
 
@@ -560,7 +597,8 @@ impl EditorCanvas {
                             .fit_to_exact_size(vec2(13.0, 13.0))
                             .tint(tint);
 
-                        let btn = ui.add(egui::Button::image(icon_img).fill(Color32::TRANSPARENT))
+                        let btn = ui
+                            .add(egui::Button::image(icon_img).fill(Color32::TRANSPARENT))
                             .on_hover_text("Alternar Painel de Propriedades");
 
                         if btn.clicked() {
@@ -575,13 +613,31 @@ impl EditorCanvas {
                         if openness < 1.0 {
                             ui.set_opacity(openness);
                         }
-                        
-                        ui.checkbox(&mut state.view_options.show_margins, "Visualização das margens");
-                        ui.checkbox(&mut state.view_options.show_path_segments, "Segmentos de retas");
-                        ui.checkbox(&mut state.view_options.show_positive_axes, "Eixos positivos (X, Y)");
-                        ui.checkbox(&mut state.view_options.show_negative_axes, "Eixos negativos (-X, -Y)");
-                        ui.checkbox(&mut state.view_options.show_axis_numbers, "Números nos eixos");
-                        ui.checkbox(&mut state.view_options.show_parameter_labels, "Valores dos parâmetros");
+
+                        ui.checkbox(
+                            &mut state.view_options.show_margins,
+                            "Visualização das margens",
+                        );
+                        ui.checkbox(
+                            &mut state.view_options.show_path_segments,
+                            "Segmentos de retas",
+                        );
+                        ui.checkbox(
+                            &mut state.view_options.show_positive_axes,
+                            "Eixos positivos (X, Y)",
+                        );
+                        ui.checkbox(
+                            &mut state.view_options.show_negative_axes,
+                            "Eixos negativos (-X, -Y)",
+                        );
+                        ui.checkbox(
+                            &mut state.view_options.show_axis_numbers,
+                            "Números nos eixos",
+                        );
+                        ui.checkbox(
+                            &mut state.view_options.show_parameter_labels,
+                            "Valores dos parâmetros",
+                        );
                         ui.checkbox(&mut state.view_options.lock_obstacles, "Travar obstáculos");
                     });
                 }
@@ -653,7 +709,10 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         // Eixo +X (Azul Rerun)
         let x_pos_end = pos2(rect.right(), origin_screen.y);
         if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
-            painter.line_segment([origin_screen, x_pos_end], Stroke::new(2.0, Color32::from_rgb(60, 140, 240)));
+            painter.line_segment(
+                [origin_screen, x_pos_end],
+                Stroke::new(2.0, Color32::from_rgb(60, 140, 240)),
+            );
             painter.text(
                 x_pos_end - vec2(15.0, 15.0),
                 Align2::RIGHT_BOTTOM,
@@ -666,7 +725,10 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         // Eixo +Y (Verde Rerun) até o topo da tela
         let y_pos_end = pos2(origin_screen.x, rect.top());
         if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
-            painter.line_segment([origin_screen, y_pos_end], Stroke::new(2.0, Color32::from_rgb(60, 220, 100)));
+            painter.line_segment(
+                [origin_screen, y_pos_end],
+                Stroke::new(2.0, Color32::from_rgb(60, 220, 100)),
+            );
             painter.text(
                 y_pos_end + vec2(10.0, 5.0),
                 Align2::LEFT_TOP,
@@ -682,7 +744,10 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         // Eixo -X (Azul Escuro)
         let x_neg_end = pos2(rect.left(), origin_screen.y);
         if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
-            painter.line_segment([origin_screen, x_neg_end], Stroke::new(1.8, Color32::from_rgb(30, 75, 140)));
+            painter.line_segment(
+                [origin_screen, x_neg_end],
+                Stroke::new(1.8, Color32::from_rgb(30, 75, 140)),
+            );
             painter.text(
                 x_neg_end + vec2(15.0, -15.0),
                 Align2::LEFT_BOTTOM,
@@ -695,7 +760,10 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         // Eixo -Y (Verde Escuro) até a base da tela
         let y_neg_end = pos2(origin_screen.x, rect.bottom());
         if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
-            painter.line_segment([origin_screen, y_neg_end], Stroke::new(1.8, Color32::from_rgb(30, 120, 60)));
+            painter.line_segment(
+                [origin_screen, y_neg_end],
+                Stroke::new(1.8, Color32::from_rgb(30, 120, 60)),
+            );
             painter.text(
                 y_neg_end + vec2(10.0, -15.0),
                 Align2::LEFT_BOTTOM,
@@ -723,11 +791,20 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         while x_val <= max_x {
             if x_val.abs() > 0.001 {
                 let is_pos = x_val > 0.0;
-                if (is_pos && state.view_options.show_positive_axes) || (!is_pos && state.view_options.show_negative_axes) {
+                if (is_pos && state.view_options.show_positive_axes)
+                    || (!is_pos && state.view_options.show_negative_axes)
+                {
                     let p = state.world_to_screen(vec2(x_val, 0.0), rect);
                     if p.x >= rect.left() && p.x <= rect.right() {
-                        let tick_color = if is_pos { Color32::from_rgb(60, 140, 240) } else { Color32::from_rgb(30, 75, 140) };
-                        painter.line_segment([p - vec2(0.0, 4.0), p + vec2(0.0, 4.0)], Stroke::new(1.2, tick_color));
+                        let tick_color = if is_pos {
+                            Color32::from_rgb(60, 140, 240)
+                        } else {
+                            Color32::from_rgb(30, 75, 140)
+                        };
+                        painter.line_segment(
+                            [p - vec2(0.0, 4.0), p + vec2(0.0, 4.0)],
+                            Stroke::new(1.2, tick_color),
+                        );
                         let label = format!("{:.0}", x_val);
                         painter.text(
                             p + vec2(0.0, 8.0),
@@ -747,11 +824,20 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         while y_val <= max_y {
             if y_val.abs() > 0.001 {
                 let is_pos = y_val > 0.0;
-                if (is_pos && state.view_options.show_positive_axes) || (!is_pos && state.view_options.show_negative_axes) {
+                if (is_pos && state.view_options.show_positive_axes)
+                    || (!is_pos && state.view_options.show_negative_axes)
+                {
                     let p = state.world_to_screen(vec2(0.0, y_val), rect);
                     if p.y >= rect.top() && p.y <= rect.bottom() {
-                        let tick_color = if is_pos { Color32::from_rgb(60, 220, 100) } else { Color32::from_rgb(30, 120, 60) };
-                        painter.line_segment([p - vec2(4.0, 0.0), p + vec2(4.0, 0.0)], Stroke::new(1.2, tick_color));
+                        let tick_color = if is_pos {
+                            Color32::from_rgb(60, 220, 100)
+                        } else {
+                            Color32::from_rgb(30, 120, 60)
+                        };
+                        painter.line_segment(
+                            [p - vec2(4.0, 0.0), p + vec2(4.0, 0.0)],
+                            Stroke::new(1.2, tick_color),
+                        );
                         let label = format!("{:.0}", y_val);
                         painter.text(
                             p - vec2(8.0, 0.0),
@@ -807,7 +893,13 @@ fn draw_points_and_path(
                 }
 
                 let ortho = vec2(-dir.y, dir.x);
-                let num_arrows = if dist > 120.0 { 3 } else if dist > 50.0 { 2 } else { 1 };
+                let num_arrows = if dist > 120.0 {
+                    3
+                } else if dist > 50.0 {
+                    2
+                } else {
+                    1
+                };
                 for k in 1..=num_arrows {
                     let frac = (k as f32) / ((num_arrows + 1) as f32);
                     let arrow_pos = p1 + dir * (dist * frac);
@@ -854,7 +946,11 @@ fn draw_points_and_path(
             Color32::WHITE
         };
         painter.circle_filled(pos, pt_radius, pt_color);
-        painter.circle_stroke(pos, pt_radius + 2.0, Stroke::new(1.5, Color32::from_rgb(17, 19, 23)));
+        painter.circle_stroke(
+            pos,
+            pt_radius + 2.0,
+            Stroke::new(1.5, Color32::from_rgb(17, 19, 23)),
+        );
 
         let mut label_y_offset = pt_radius + 12.0;
 
@@ -962,7 +1058,8 @@ fn draw_obstacles(
                         .iter()
                         .map(|v| state.world_to_screen(vec2(v[0], v[1]), rect))
                         .collect();
-                    let stroke_line = Stroke::new(if is_selected { 3.5 } else { 2.2 }, stroke_color);
+                    let stroke_line =
+                        Stroke::new(if is_selected { 3.5 } else { 2.2 }, stroke_color);
                     for i in 0..pts.len() - 1 {
                         painter.line_segment([pts[i], pts[i + 1]], stroke_line);
                     }
@@ -1060,7 +1157,10 @@ fn draw_poly_building(
 
     if pts.len() > 1 {
         for i in 0..pts.len() - 1 {
-            painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.8, Color32::from_rgb(255, 200, 50)));
+            painter.line_segment(
+                [pts[i], pts[i + 1]],
+                Stroke::new(1.8, Color32::from_rgb(255, 200, 50)),
+            );
         }
     }
 
@@ -1142,9 +1242,9 @@ fn point_in_polygon(pt: Vec2, vertices: &[[f32; 2]]) -> bool {
 
 fn obstacle_intersects_box(obs: &Obstacle, min_x: f32, max_x: f32, min_y: f32, max_y: f32) -> bool {
     match &obs.shape {
-        ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => {
-            vertices.iter().any(|v| v[0] >= min_x && v[0] <= max_x && v[1] >= min_y && v[1] <= max_y)
-        }
+        ObstacleShape::Polygon { vertices } | ObstacleShape::Line { vertices } => vertices
+            .iter()
+            .any(|v| v[0] >= min_x && v[0] <= max_x && v[1] >= min_y && v[1] <= max_y),
         ObstacleShape::Rectangle {
             x,
             y,
@@ -1162,7 +1262,10 @@ fn obstacle_intersects_box(obs: &Obstacle, min_x: f32, max_x: f32, min_y: f32, m
         ObstacleShape::Circle { center, radius } => {
             let cx = center[0];
             let cy = center[1];
-            cx + radius >= min_x && cx - radius <= max_x && cy + radius >= min_y && cy - radius <= max_y
+            cx + radius >= min_x
+                && cx - radius <= max_x
+                && cy + radius >= min_y
+                && cy - radius <= max_y
         }
     }
 }
@@ -1205,7 +1308,8 @@ mod tests {
 
     #[test]
     fn test_obstacle_intersects_box() {
-        let rect_obs = Obstacle::new_rectangle("r1".to_string(), ObstacleKind::Physical, 0.0, 0.0, 2.0, 2.0);
+        let rect_obs =
+            Obstacle::new_rectangle("r1".to_string(), ObstacleKind::Physical, 0.0, 0.0, 2.0, 2.0);
         assert!(obstacle_intersects_box(&rect_obs, -0.5, 0.5, -0.5, 0.5));
         assert!(!obstacle_intersects_box(&rect_obs, 5.0, 10.0, 5.0, 10.0));
     }

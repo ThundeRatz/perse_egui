@@ -97,21 +97,35 @@ mod tests {
         state.config.is_display_options_open = false;
         state.config.canvas_display_options.show_margins = false;
         state.config.canvas_display_options.show_parameter_labels = false;
-        state.config.canvas_display_options.visible_param_keys.insert("my_param".to_string());
+        state
+            .config
+            .canvas_display_options
+            .visible_param_keys
+            .insert("my_param".to_string());
         state.config.color_parameter_hierarchy = true;
 
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("perse_test_persistent_config.json");
 
-        state.save_to_file(&test_file).expect("Should save persistent state");
-        let loaded = PersistentAppState::load_from_file(&test_file).expect("Should load persistent state");
+        state
+            .save_to_file(&test_file)
+            .expect("Should save persistent state");
+        let loaded =
+            PersistentAppState::load_from_file(&test_file).expect("Should load persistent state");
 
         assert_eq!(loaded.config.endpoint, "1.2.3.4:5678");
-        assert_eq!(loaded.config.custom_config_path, Some("test_config.json".to_string()));
-        assert_eq!(loaded.config.is_display_options_open, false);
-        assert_eq!(loaded.config.canvas_display_options.show_margins, false);
-        assert_eq!(loaded.config.canvas_display_options.show_parameter_labels, false);
-        assert!(loaded.config.canvas_display_options.visible_param_keys.contains("my_param"));
+        assert_eq!(
+            loaded.config.custom_config_path,
+            Some("test_config.json".to_string())
+        );
+        assert!(!loaded.config.is_display_options_open);
+        assert!(!loaded.config.canvas_display_options.show_margins);
+        assert!(!loaded.config.canvas_display_options.show_parameter_labels);
+        assert!(loaded
+            .config
+            .canvas_display_options
+            .visible_param_keys
+            .contains("my_param"));
         assert!(loaded.config.color_parameter_hierarchy);
 
         let _ = std::fs::remove_file(test_file);
