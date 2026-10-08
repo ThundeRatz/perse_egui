@@ -4,7 +4,8 @@ use axum::{
         ws::{WebSocket, WebSocketUpgrade},
         Request, State,
     },
-    http::{Response, StatusCode},
+    http::{header, HeaderValue, Response, StatusCode},
+    middleware::Next,
     response::Html,
     routing::{any, get},
     Router,
@@ -22,6 +23,7 @@ use crate::panels::parameters::PackageParams;
 use crate::panels::terminals::TerminalTab;
 
 static INDEX_HTML: &str = include_str!("../../web/index.html");
+const VIEWER_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 #[derive(Clone)]
 struct ProxyState {
@@ -184,6 +186,7 @@ pub async fn run_daemon_server(
         .route("/rerun.{*path}", any(proxy_handler))
         .fallback_service(ServeDir::new(&web_dir).append_index_html_on_directories(true))
         .with_state(proxy_state.clone())
+        .layer(axum::middleware::from_fn(cache_viewer_assets_middleware))
         .layer(CorsLayer::permissive());
 
     let js_path = web_dir.join("rewire_viewer.js");
@@ -205,6 +208,25 @@ pub async fn run_daemon_server(
 
 async fn index_handler() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+fn should_cache_viewer_asset(path: &str) -> bool {
+    matches!(path, "/rewire_viewer.js" | "/rewire_viewer_bg.wasm")
+}
+
+async fn cache_viewer_assets_middleware(req: Request, next: Next) -> Response {
+    let should_cache = should_cache_viewer_asset(req.uri().path());
+    let response = next.run(req).await;
+    if !should_cache || !response.status().is_success() {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+    parts.headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(VIEWER_ASSET_CACHE_CONTROL),
+    );
+    Response::from_parts(parts, body)
 }
 
 async fn proxy_handler(
@@ -857,7 +879,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::http::{header, Request};
     use tower::ServiceExt;
 
     #[test]
@@ -889,6 +911,7 @@ mod tests {
             .route("/proxy/{*path}", any(proxy_handler))
             .route("/rerun.{*path}", any(proxy_handler))
             .fallback_service(ServeDir::new("web"))
+            .layer(axum::middleware::from_fn(cache_viewer_assets_middleware))
             .with_state(proxy_state);
 
         let req = Request::builder()
@@ -899,6 +922,41 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
         assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[test]
+    fn test_should_cache_viewer_asset() {
+        assert!(should_cache_viewer_asset("/rewire_viewer.js"));
+        assert!(should_cache_viewer_asset("/rewire_viewer_bg.wasm"));
+        assert!(!should_cache_viewer_asset("/index.html"));
+        assert!(!should_cache_viewer_asset("/proxy"));
+    }
+
+    #[tokio::test]
+    async fn test_cache_header_added_for_viewer_assets() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_web_cache_headers_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("rewire_viewer.js"), "console.log('ok');").unwrap();
+
+        let app = Router::new()
+            .fallback_service(ServeDir::new(&temp_dir))
+            .layer(axum::middleware::from_fn(cache_viewer_assets_middleware));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/rewire_viewer.js")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            VIEWER_ASSET_CACHE_CONTROL
+        );
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]

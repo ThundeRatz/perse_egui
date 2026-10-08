@@ -83,7 +83,7 @@
         status.textContent = "Loading module...";
 
         // Fetch and patch the JS glue to replace bare "env" import with inline shim
-        const jsResponse = await fetch("./rewire_viewer.js", { cache: "no-store" });
+        const jsResponse = await fetch("./rewire_viewer.js", { cache: "force-cache" });
         let jsText = await jsResponse.text();
         jsText = jsText.replace(
           /import \* as (\w+) from ['"]env['"];?/,
@@ -96,8 +96,8 @@
         const init = module.default;
         const PerseWebHandle = module.PerseWebHandle || module.RewireWebHandle;
 
-        status.textContent = "Downloading viewer...";
-        const wasmResponse = await fetch("./rewire_viewer_bg.wasm");
+        status.textContent = "Loading viewer...";
+        const wasmResponse = await fetch("./rewire_viewer_bg.wasm", { cache: "force-cache" });
         const contentLength = wasmResponse.headers.get("content-length");
         const total = contentLength ? parseInt(contentLength, 10) : 0;
         let loaded = 0;
@@ -112,7 +112,7 @@
           if (total > 0) {
             const pct = Math.round((loaded / total) * 100);
             progressBar.style.width = pct + "%";
-            status.textContent = `Downloading viewer... ${pct}%`;
+            status.textContent = `Loading viewer... ${pct}%`;
           }
         }
 
