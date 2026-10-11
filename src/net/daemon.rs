@@ -4,8 +4,9 @@ use axum::{
         ws::{WebSocket, WebSocketUpgrade},
         Request, State,
     },
-    http::{header, HeaderValue, Response, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::Next,
+    response::Response,
     routing::{any, get},
     Router,
 };
@@ -263,7 +264,7 @@ async fn proxy_handler(
     match builder.send().await {
         Ok(resp) => {
             let status = resp.status();
-            let mut response_builder = Response::builder().status(status);
+            let mut response_builder = axum::http::Response::builder().status(status);
 
             for (name, val) in resp.headers().iter() {
                 if name == axum::http::header::TRANSFER_ENCODING
@@ -293,7 +294,7 @@ async fn proxy_handler(
     }
 }
 
-async fn ws_control_handler(ws: WebSocketUpgrade, host_state: HostState) -> Response<Body> {
+async fn ws_control_handler(ws: WebSocketUpgrade, host_state: HostState) -> Response {
     ws.on_upgrade(move |socket| handle_control_socket(socket, host_state))
 }
 
