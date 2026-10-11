@@ -6,7 +6,6 @@ use axum::{
     },
     http::{header, HeaderValue, Response, StatusCode},
     middleware::Next,
-    response::Html,
     routing::{any, get},
     Router,
 };
@@ -22,7 +21,6 @@ use crate::panels::launchfiles::{LaunchPackage, LaunchStatus};
 use crate::panels::parameters::PackageParams;
 use crate::panels::terminals::TerminalTab;
 
-static INDEX_HTML: &str = include_str!("../../web/index.html");
 const VIEWER_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 #[derive(Clone)]
@@ -172,8 +170,6 @@ pub async fn run_daemon_server(
     };
 
     let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/index.html", get(index_handler))
         .route(
             "/ws/control",
             get({
@@ -204,10 +200,6 @@ pub async fn run_daemon_server(
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-async fn index_handler() -> Html<&'static str> {
-    Html(INDEX_HTML)
 }
 
 fn should_cache_viewer_asset(path: &str) -> bool {
@@ -882,12 +874,6 @@ mod tests {
     use axum::http::{header, Request};
     use tower::ServiceExt;
 
-    #[test]
-    fn test_index_html_embedded() {
-        assert!(INDEX_HTML.contains("Rewire Viewer"));
-        assert!(INDEX_HTML.contains("the_canvas_id"));
-    }
-
     #[tokio::test]
     async fn test_grpc_route_matching() {
         let proxy_state = ProxyState {
@@ -898,8 +884,6 @@ mod tests {
         let host_state = HostState::new(tx);
 
         let app = Router::new()
-            .route("/", get(index_handler))
-            .route("/index.html", get(index_handler))
             .route(
                 "/ws/control",
                 get({
@@ -910,7 +894,7 @@ mod tests {
             .route("/proxy", any(proxy_handler))
             .route("/proxy/{*path}", any(proxy_handler))
             .route("/rerun.{*path}", any(proxy_handler))
-            .fallback_service(ServeDir::new("web"))
+            .fallback_service(ServeDir::new("web").append_index_html_on_directories(true))
             .layer(axum::middleware::from_fn(cache_viewer_assets_middleware))
             .with_state(proxy_state);
 
@@ -922,6 +906,32 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
         assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_root_serves_index_from_filesystem() {
+        let temp_dir = std::env::temp_dir().join(format!("test_root_index_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("index.html"), "<html>from-disk</html>").unwrap();
+
+        let app = Router::new()
+            .fallback_service(ServeDir::new(&temp_dir).append_index_html_on_directories(true));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(body_str.contains("from-disk"));
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
