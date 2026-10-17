@@ -18,7 +18,7 @@ else
     TARGET_ARCH := $(ARCH)
 endif
 
-.PHONY: all prepare build build-daemon build-web download install install-user daemon run service clean help
+.PHONY: all prepare build build-daemon build-web download install install-user daemon run run-web run-daemon service clean help
 
 help:
 	@echo "=========================================================================="
@@ -33,7 +33,8 @@ help:
 	@echo "                      (ideal para o robô/Jetson sem cargo instalado)"
 	@echo "  make install      - Instala binário e pasta web em $(PREFIX) (requer sudo)"
 	@echo "  make install-user - Instala binário em ~/.local/bin sem precisar de sudo"
-	@echo "  make daemon       - Executa localmente em modo servidor daemon na porta $(PORT)"
+	@echo "  make run-daemon   - Roda o servidor daemon headless via Cargo na porta $(PORT)"
+	@echo "  make daemon       - Executa binário existente em modo daemon na porta $(PORT)"
 	@echo "  make run          - Executa a interface nativa conectando em $(CONNECT)"
 	@echo "  make service      - Cria e configura serviço systemd para rodar daemon no boot"
 	@echo "  make clean        - Limpa os artefatos compilados"
@@ -60,18 +61,8 @@ build-web: prepare
 	./build_web.sh
 
 download:
-	@echo "==> Arquitetura detectada: $(TARGET_ARCH)"
-	@mkdir -p target/release
-	@echo "==> Baixando binário pré-compilado perse_egui-$(TARGET_ARCH)..."
-	curl -fsSL -o target/release/perse_egui "$(RELEASE_URL)/perse_egui-$(TARGET_ARCH)" || \
-		(echo "❌ Erro ao baixar perse_egui-$(TARGET_ARCH) de $(RELEASE_URL)" && exit 1)
-	@chmod +x target/release/perse_egui
-	@echo "==> Baixando artefatos WebAssembly (perse_egui-web.tar.gz)..."
-	curl -fsSL -o perse_egui-web.tar.gz "$(RELEASE_URL)/perse_egui-web.tar.gz" || \
-		(echo "❌ Erro ao baixar perse_egui-web.tar.gz de $(RELEASE_URL)" && exit 1)
-	@tar -xzf perse_egui-web.tar.gz
-	@rm -f perse_egui-web.tar.gz
-	@echo "✅ Download concluído! Binário em 'target/release/perse_egui' e pasta 'web/' pronta."
+	@chmod +x ./download_release.sh
+	./download_release.sh target/release
 
 install:
 	@echo "==> Instalando em $(PREFIX)..."
@@ -86,17 +77,14 @@ install:
 	@echo "✅ Instalação concluída com sucesso em $(PREFIX)/bin/perse_egui!"
 
 install-user:
-	@echo "==> Instalando para o usuário atual em $(HOME)/.local..."
-	@if [ ! -f target/release/perse_egui ]; then \
-		echo "⚠️ Binário não encontrado. Executando 'make download' primeiro..."; \
-		$(MAKE) download; \
-	fi
-	install -d $(HOME)/.local/bin
-	install -m 755 target/release/perse_egui $(HOME)/.local/bin/perse_egui
-	install -d $(HOME)/.local/share/perse_egui/web
-	cp -r web/* $(HOME)/.local/share/perse_egui/web/
+	@chmod +x ./download_release.sh
+	./download_release.sh
 	@echo "✅ Instalação de usuário concluída em $(HOME)/.local/bin/perse_egui!"
 	@echo "Certifique-se de que $(HOME)/.local/bin está no seu PATH."
+
+run-daemon:
+	@echo "==> Iniciando perse_egui headless daemon na porta $(PORT)..."
+	cargo run --release --no-default-features -- --port $(PORT) --connect $(CONNECT)
 
 daemon:
 	@if [ -f $(PREFIX)/bin/perse_egui ]; then \
@@ -104,8 +92,7 @@ daemon:
 	elif [ -f target/release/perse_egui ]; then \
 		target/release/perse_egui --daemon --port $(PORT) --connect $(CONNECT); \
 	else \
-		echo "Binário não encontrado. Execute 'make build' ou 'make download' primeiro."; \
-		exit 1; \
+		$(MAKE) run-web; \
 	fi
 
 run:

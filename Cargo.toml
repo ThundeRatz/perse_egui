@@ -86,3 +86,11 @@ opt-level = 2
 
 [profile.dev.package.image]
 opt-level = 2
+
+# Otimizações para perfil release (reduz drasticamente o tamanho do WebAssembly e acelera download)
+[profile.release]
+opt-level = "s"      # Otimização agressiva voltada para tamanho de código
+lto = "thin"         # Link-Time Optimization entre crates (DCE) sem comprometer o tempo de build
+strip = true         # Remove tabelas de símbolos e metadados de debug
+panic = "abort"      # Remove o maquinário de stack unwinding
+codegen-units = 16   # Mantém compilação paralela rápida com thin LTO

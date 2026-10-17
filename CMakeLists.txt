@@ -44,64 +44,29 @@ if(CARGO_EXECUTABLE AND NOT PERSE_DOWNLOAD_PREBUILT)
     )
 else()
     if(PERSE_DOWNLOAD_PREBUILT)
-        message(STATUS "PERSE_DOWNLOAD_PREBUILT ativado. Baixando binário pré-compilado para ${TARGET_ARCH}...")
+        message(STATUS "PERSE_DOWNLOAD_PREBUILT ativado. Baixando e instalando release pré-compilada via download_release.sh...")
     else()
-        message(STATUS "Cargo não encontrado no PATH. Baixando binário pré-compilado para ${TARGET_ARCH}...")
+        message(STATUS "Cargo não encontrado no PATH. Baixando e instalando release pré-compilada via download_release.sh...")
     endif()
 
-    set(DOWNLOAD_BINARY_NAME "perse_egui-${TARGET_ARCH}")
-    set(DOWNLOAD_URL "https://github.com/ThundeRatz/perse_egui/releases/latest/download/${DOWNLOAD_BINARY_NAME}")
     set(PERSE_EGUI_BINARY "${CMAKE_CURRENT_BINARY_DIR}/perse_egui")
 
-    message(STATUS "URL de Download do Binário: ${DOWNLOAD_URL}")
-    message(STATUS "Destino: ${PERSE_EGUI_BINARY}")
-
-    # Baixar binário pré-compilado
-    file(DOWNLOAD
-        "${DOWNLOAD_URL}"
-        "${PERSE_EGUI_BINARY}"
-        SHOW_PROGRESS
-        STATUS DOWNLOAD_STATUS
+    execute_process(
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/download_release.sh" "${CMAKE_CURRENT_BINARY_DIR}"
+        RESULT_VARIABLE DOWNLOAD_RESULT
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
-    list(GET DOWNLOAD_STATUS 0 STATUS_CODE)
-    list(GET DOWNLOAD_STATUS 1 ERROR_MESSAGE)
-
-    if(NOT STATUS_CODE EQUAL 0)
-        message(WARNING "Não foi possível baixar o binário de ${DOWNLOAD_URL}: ${ERROR_MESSAGE}")
-        # Tentar usar binário existente localmente como fallback
+    if(NOT DOWNLOAD_RESULT EQUAL 0)
+        message(WARNING "download_release.sh retornou erro (${DOWNLOAD_RESULT}).")
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/target/release/perse_egui")
             message(STATUS "Usando binário existente em target/release/perse_egui como fallback.")
             set(PERSE_EGUI_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/target/release/perse_egui")
+        elseif(EXISTS "$ENV{HOME}/.local/bin/perse_egui")
+            message(STATUS "Usando binário existente em ~/.local/bin/perse_egui como fallback.")
+            set(PERSE_EGUI_BINARY "$ENV{HOME}/.local/bin/perse_egui")
         else()
-            message(WARNING "Certifique-se de que a máquina possui conexão à internet ou que o binário foi publicado no GitHub.")
-        endif()
-    else()
-        file(CHMOD "${PERSE_EGUI_BINARY}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-    endif()
-
-    # Baixar artefatos WebAssembly se não existirem localmente
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/web/rewire_viewer_bg.wasm" AND NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/web/rewire_viewer_bg.wasm")
-        set(WEB_DOWNLOAD_URL "https://github.com/ThundeRatz/perse_egui/releases/latest/download/perse_egui-web.tar.gz")
-        set(WEB_TARBALL "${CMAKE_CURRENT_BINARY_DIR}/perse_egui-web.tar.gz")
-        message(STATUS "Baixando artefatos WebAssembly de ${WEB_DOWNLOAD_URL}...")
-
-        file(DOWNLOAD
-            "${WEB_DOWNLOAD_URL}"
-            "${WEB_TARBALL}"
-            SHOW_PROGRESS
-            STATUS WEB_DOWNLOAD_STATUS
-        )
-
-        list(GET WEB_DOWNLOAD_STATUS 0 WEB_STATUS_CODE)
-        if(WEB_STATUS_CODE EQUAL 0)
-            message(STATUS "Extraindo artefatos web em ${CMAKE_CURRENT_BINARY_DIR}...")
-            execute_process(
-                COMMAND ${CMAKE_COMMAND} -E tar xzf "${WEB_TARBALL}"
-                WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-            )
-        else()
-            message(WARNING "Não foi possível baixar os artefatos WebAssembly: ${WEB_DOWNLOAD_STATUS}")
+            message(WARNING "Binário perse_egui não encontrado. Certifique-se de ter conexão com a internet ou instale o binário manualmente.")
         endif()
     endif()
 endif()

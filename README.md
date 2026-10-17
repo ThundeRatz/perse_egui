@@ -105,6 +105,7 @@ make help          # Exibe todos os comandos disponíveis
 make build         # Compila o binário nativo com Cargo
 make build-daemon  # Compila apenas o binário headless daemon (sem GUI nativa, muito rápido)
 make build-web     # Compila os artefatos WebAssembly (web/)
+make run-web       # Compila os artefatos web (se necessário) e roda via cargo run
 make all           # Compila nativo + web
 ```
 
@@ -114,19 +115,19 @@ make all           # Compila nativo + web
 
 No robô (Nvidia Jetson / arquitetura `aarch64`), a compilação do Rust e suas dependências gráficas (`eframe`, `wgpu`, `rewire-viewer`) pode consumir muita memória RAM e espaço em disco. Para contornar isso, o projeto disponibiliza binários pré-compilados nas Releases do GitHub.
 
-### Opção A: Instalação Rápida via Makefile (Recomendado no Robô)
+### Opção A: Instalação Rápida via Script ou Makefile (Recomendado no Robô)
 
-O `Makefile` detecta automaticamente a arquitetura do robô (`aarch64` ou `x86_64`) e baixa os binários e os artefatos WebAssembly sem precisar do Cargo:
+O script `download_release.sh` (e o `Makefile`) detecta automaticamente a arquitetura do robô (`aarch64` ou `x86_64`) e baixa os binários e os artefatos WebAssembly sem precisar do Cargo:
 
 ```bash
-# 1. Baixar o binário da arquitetura e o pacote WebAssembly (web/)
-make download
-
-# 2. Instalar no sistema (/usr/local/bin e /usr/local/share)
-sudo make install
-
-# Ou instalar apenas para o usuário atual (~/.local/bin):
+# 1. Instalar diretamente para o usuário atual (~/.local/bin e ~/.local/share/perse_egui/web):
+./download_release.sh
+# Ou via Makefile:
 make install-user
+
+# 2. Ou baixar e instalar no sistema global (/usr/local/bin e /usr/local/share):
+make download
+sudo make install
 ```
 
 ### Opção B: Serviço do Sistema (Systemd no Robô)

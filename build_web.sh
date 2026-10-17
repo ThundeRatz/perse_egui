@@ -40,8 +40,8 @@ wasm-bindgen --target web --out-dir web/ --out-name rewire_viewer "$WASMBIN"
 
 # 6. Otimizar tamanho do arquivo WebAssembly com wasm-opt
 if command -v wasm-opt &> /dev/null; then
-    echo "==> Executando wasm-opt -O2 para reduzir o tamanho do binário WebAssembly..."
-    wasm-opt -O2 web/rewire_viewer_bg.wasm -o web/rewire_viewer_bg.wasm
+    echo "==> Executando wasm-opt --all-features -O2 para reduzir o tamanho do binário WebAssembly..."
+    wasm-opt --all-features -O2 web/rewire_viewer_bg.wasm -o web/rewire_viewer_bg.wasm
 else
     echo "⚠️ wasm-opt não disponível. Mantendo o arquivo .wasm sem a otimização secundária."
 fi
