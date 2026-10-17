@@ -37,25 +37,29 @@ impl Default for CanvasState {
 
 impl CanvasState {
     /// Converte Coordenada do Mundo (m) -> Coordenada da Tela (pixels)
+    /// Sistema de coordenadas:
+    /// - Eixo X é positivo para cima (vertical: na tela egui, -Y é para cima)
+    /// - Eixo Y é positivo para a esquerda (horizontal: na tela egui, -X é para a esquerda)
     pub fn world_to_screen(&self, world_pos: Vec2, rect: Rect) -> Pos2 {
         let center = rect.center();
-        let delta = world_pos - self.pan;
-        // No mundo: +Y é para cima. Na tela egui: +Y é para baixo.
         pos2(
-            center.x + delta.x * self.zoom,
-            center.y - delta.y * self.zoom,
+            center.x - (world_pos.y - self.pan.y) * self.zoom,
+            center.y - (world_pos.x - self.pan.x) * self.zoom,
         )
     }
 
     /// Converte Coordenada da Tela (pixels) -> Coordenada do Mundo (m)
     pub fn screen_to_world(&self, screen_pos: Pos2, rect: Rect) -> Vec2 {
         let center = rect.center();
-        let delta_screen = screen_pos - center;
         Vec2::new(
-            self.pan.x + delta_screen.x / self.zoom,
-            self.pan.y - delta_screen.y / self.zoom,
+            self.pan.x - (screen_pos.y - center.y) / self.zoom,
+            self.pan.y - (screen_pos.x - center.x) / self.zoom,
         )
     }
+}
+
+impl CanvasState {
+    // Helpers adicionais se necessário
 }
 
 pub struct EditorCanvas;
@@ -100,8 +104,8 @@ impl EditorCanvas {
 
         if is_middle_drag || is_right_drag {
             let delta = response.drag_delta();
-            state.pan.x -= delta.x / state.zoom;
-            state.pan.y += delta.y / state.zoom;
+            state.pan.x += delta.y / state.zoom;
+            state.pan.y += delta.x / state.zoom;
         }
 
         // 3. Renderizar Grade Infinita, Eixos (Positivos e Negativos) e Números Dinâmicos
@@ -115,7 +119,7 @@ impl EditorCanvas {
 
         // 6. Renderizar Robô (Pose)
         let robot = robot_pose.unwrap_or([0.0, 0.0, 0.0]);
-        draw_robot(&painter, rect, state, robot);
+        draw_robot(&painter, rect, state, robot, false);
 
         // 7. Renderizar Polígono ou Linha em Construção
         if !state.poly_building.is_empty() {
@@ -406,8 +410,8 @@ impl EditorCanvas {
             && matches!(active_tool, ActiveTool::Select)
         {
             let delta_world = vec2(
-                response.drag_delta().x / state.zoom,
                 -response.drag_delta().y / state.zoom,
+                -response.drag_delta().x / state.zoom,
             );
 
             if let Some(ref target) = state.drag_target {
@@ -458,8 +462,8 @@ impl EditorCanvas {
                     }
                 }
             } else if state.box_select_start.is_none() {
-                state.pan.x -= response.drag_delta().x / state.zoom;
-                state.pan.y += response.drag_delta().y / state.zoom;
+                state.pan.x += response.drag_delta().y / state.zoom;
+                state.pan.y += response.drag_delta().x / state.zoom;
             }
         }
 
@@ -623,6 +627,83 @@ impl EditorCanvas {
 
         response
     }
+
+    pub fn show_read_only(
+        ui: &mut egui::Ui,
+        state: &mut CanvasState,
+        data: &MissionData,
+        robot_pose: Option<[f32; 3]>,
+        robot_glowing: bool,
+        route_strips: &[(Color32, Vec<[f32; 2]>)],
+        zoom_speed: f32,
+    ) -> Response {
+        let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
+        let rect = response.rect;
+        let painter = painter.with_clip_rect(rect);
+
+        let mouse_pos = response.hover_pos().unwrap_or(rect.center());
+        let mouse_world = state.screen_to_world(mouse_pos, rect);
+
+        // 1. Navegação Zoom via Roda do Mouse
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+        if response.hovered() && scroll_delta != 0.0 {
+            let step = zoom_speed.clamp(0.005, 0.2);
+            let zoom_factor = if scroll_delta > 0.0 {
+                1.0 + step
+            } else {
+                1.0 - step
+            };
+            if let Some(hover_pos) = response.hover_pos() {
+                let world_before = state.screen_to_world(hover_pos, rect);
+                state.zoom = (state.zoom * zoom_factor).clamp(5.0, 500.0);
+                let world_after = state.screen_to_world(hover_pos, rect);
+                state.pan += world_before - world_after;
+            } else {
+                state.zoom = (state.zoom * zoom_factor).clamp(5.0, 500.0);
+            }
+        }
+
+        // 2. Navegação Pan via Botão Esquerdo, Meio ou Direito (modo somente leitura)
+        let is_left_drag = response.dragged_by(egui::PointerButton::Primary);
+        let is_middle_drag = response.dragged_by(egui::PointerButton::Middle);
+        let is_right_drag = response.dragged_by(egui::PointerButton::Secondary);
+
+        if is_left_drag || is_middle_drag || is_right_drag {
+            let delta = response.drag_delta();
+            state.pan.x += delta.y / state.zoom;
+            state.pan.y += delta.x / state.zoom;
+        }
+
+        let empty_selection = Selection::default();
+
+        // 3. Renderizar Grade Infinita, Eixos e Números Dinâmicos
+        draw_grid(&painter, rect, state);
+
+        // 4. Renderizar Obstáculos
+        draw_obstacles(&painter, rect, state, &data.obstacles, &empty_selection);
+
+        // 5. Renderizar Rota (LineStrips3D da timeline)
+        draw_route_strips(&painter, rect, state, route_strips);
+
+        // 6. Renderizar Trajetória dos Marcos e Pontos
+        draw_points_and_path(&painter, rect, state, &data.points, &empty_selection);
+
+        // 7. Renderizar Robô (InstancePoses3D + Scalar para brilho)
+        let robot = robot_pose.unwrap_or([0.0, 0.0, 0.0]);
+        draw_robot(&painter, rect, state, robot, robot_glowing);
+
+        // Indicador de coordenadas
+        let coord_text = format!("X: {:.2} m, Y: {:.2} m", mouse_world.x, mouse_world.y);
+        painter.text(
+            rect.left_top() + vec2(10.0, 10.0),
+            Align2::LEFT_TOP,
+            coord_text,
+            FontId::monospace(13.0),
+            Color32::from_gray(180),
+        );
+
+        response
+    }
 }
 
 fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
@@ -672,34 +753,34 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
     // Origem Cartesiana (0,0)
     let origin_screen = state.world_to_screen(vec2(0.0, 0.0), rect);
 
-    // Eixos Positivos (X, Y)
+    // Eixos Positivos (X para cima, Y para a direita)
     if state.view_options.show_positive_axes {
-        // Eixo +X (Azul Rerun)
-        let x_pos_end = pos2(rect.right(), origin_screen.y);
-        if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
+        // Eixo +X (Azul Rerun) até o topo da tela
+        let x_pos_end = pos2(origin_screen.x, rect.top());
+        if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
             painter.line_segment(
                 [origin_screen, x_pos_end],
                 Stroke::new(2.0, Color32::from_rgb(60, 140, 240)),
             );
             painter.text(
-                x_pos_end - vec2(15.0, 15.0),
-                Align2::RIGHT_BOTTOM,
+                x_pos_end + vec2(10.0, 5.0),
+                Align2::LEFT_TOP,
                 "X",
                 FontId::proportional(14.0),
                 Color32::from_rgb(60, 140, 240),
             );
         }
 
-        // Eixo +Y (Verde Rerun) até o topo da tela
-        let y_pos_end = pos2(origin_screen.x, rect.top());
-        if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
+        // Eixo +Y (Verde Rerun) até a esquerda da tela
+        let y_pos_end = pos2(rect.left(), origin_screen.y);
+        if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
             painter.line_segment(
                 [origin_screen, y_pos_end],
                 Stroke::new(2.0, Color32::from_rgb(60, 220, 100)),
             );
             painter.text(
-                y_pos_end + vec2(10.0, 5.0),
-                Align2::LEFT_TOP,
+                y_pos_end + vec2(15.0, -15.0),
+                Align2::LEFT_BOTTOM,
                 "Y",
                 FontId::proportional(14.0),
                 Color32::from_rgb(60, 220, 100),
@@ -707,17 +788,17 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
         }
     }
 
-    // Eixos Negativos (-X, -Y) com cores mais escuras
+    // Eixos Negativos (-X para baixo, -Y para a direita) com cores mais escuras
     if state.view_options.show_negative_axes {
-        // Eixo -X (Azul Escuro)
-        let x_neg_end = pos2(rect.left(), origin_screen.y);
-        if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
+        // Eixo -X (Azul Escuro) até a base da tela
+        let x_neg_end = pos2(origin_screen.x, rect.bottom());
+        if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
             painter.line_segment(
                 [origin_screen, x_neg_end],
                 Stroke::new(1.8, Color32::from_rgb(30, 75, 140)),
             );
             painter.text(
-                x_neg_end + vec2(15.0, -15.0),
+                x_neg_end + vec2(10.0, -15.0),
                 Align2::LEFT_BOTTOM,
                 "-X",
                 FontId::proportional(12.0),
@@ -725,16 +806,16 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
             );
         }
 
-        // Eixo -Y (Verde Escuro) até a base da tela
-        let y_neg_end = pos2(origin_screen.x, rect.bottom());
-        if origin_screen.x >= rect.left() && origin_screen.x <= rect.right() {
+        // Eixo -Y (Verde Escuro) até a direita da tela
+        let y_neg_end = pos2(rect.right(), origin_screen.y);
+        if origin_screen.y >= rect.top() && origin_screen.y <= rect.bottom() {
             painter.line_segment(
                 [origin_screen, y_neg_end],
                 Stroke::new(1.8, Color32::from_rgb(30, 120, 60)),
             );
             painter.text(
-                y_neg_end + vec2(10.0, -15.0),
-                Align2::LEFT_BOTTOM,
+                y_neg_end - vec2(15.0, 15.0),
+                Align2::RIGHT_BOTTOM,
                 "-Y",
                 FontId::proportional(12.0),
                 Color32::from_rgb(30, 120, 60),
@@ -754,7 +835,7 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
             10.0
         };
 
-        // Números no Eixo X
+        // Números no Eixo X (Eixo Vertical)
         let mut x_val = (min_x / num_step).floor() * num_step;
         while x_val <= max_x {
             if x_val.abs() > 0.001 {
@@ -763,20 +844,20 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
                     || (!is_pos && state.view_options.show_negative_axes)
                 {
                     let p = state.world_to_screen(vec2(x_val, 0.0), rect);
-                    if p.x >= rect.left() && p.x <= rect.right() {
+                    if p.y >= rect.top() && p.y <= rect.bottom() {
                         let tick_color = if is_pos {
                             Color32::from_rgb(60, 140, 240)
                         } else {
                             Color32::from_rgb(30, 75, 140)
                         };
                         painter.line_segment(
-                            [p - vec2(0.0, 4.0), p + vec2(0.0, 4.0)],
+                            [p - vec2(4.0, 0.0), p + vec2(4.0, 0.0)],
                             Stroke::new(1.2, tick_color),
                         );
                         let label = format!("{:.0}", x_val);
                         painter.text(
-                            p + vec2(0.0, 8.0),
-                            Align2::CENTER_TOP,
+                            p - vec2(8.0, 0.0),
+                            Align2::RIGHT_CENTER,
                             label,
                             FontId::proportional(11.0),
                             Color32::from_gray(160),
@@ -787,7 +868,7 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
             x_val += num_step;
         }
 
-        // Números no Eixo Y
+        // Números no Eixo Y (Eixo Horizontal)
         let mut y_val = (min_y / num_step).floor() * num_step;
         while y_val <= max_y {
             if y_val.abs() > 0.001 {
@@ -796,20 +877,20 @@ fn draw_grid(painter: &Painter, rect: Rect, state: &CanvasState) {
                     || (!is_pos && state.view_options.show_negative_axes)
                 {
                     let p = state.world_to_screen(vec2(0.0, y_val), rect);
-                    if p.y >= rect.top() && p.y <= rect.bottom() {
+                    if p.x >= rect.left() && p.x <= rect.right() {
                         let tick_color = if is_pos {
                             Color32::from_rgb(60, 220, 100)
                         } else {
                             Color32::from_rgb(30, 120, 60)
                         };
                         painter.line_segment(
-                            [p - vec2(4.0, 0.0), p + vec2(4.0, 0.0)],
+                            [p - vec2(0.0, 4.0), p + vec2(0.0, 4.0)],
                             Stroke::new(1.2, tick_color),
                         );
                         let label = format!("{:.0}", y_val);
                         painter.text(
-                            p - vec2(8.0, 0.0),
-                            Align2::RIGHT_CENTER,
+                            p + vec2(0.0, 8.0),
+                            Align2::CENTER_TOP,
                             label,
                             FontId::proportional(11.0),
                             Color32::from_gray(160),
@@ -1040,9 +1121,9 @@ fn draw_obstacles(
                 height,
                 ..
             } => {
-                let min_p = state.world_to_screen(vec2(x - width / 2.0, y + height / 2.0), rect);
-                let max_p = state.world_to_screen(vec2(x + width / 2.0, y - height / 2.0), rect);
-                let r = Rect::from_two_pos(min_p, max_p);
+                let p1 = state.world_to_screen(vec2(x - width / 2.0, y - height / 2.0), rect);
+                let p2 = state.world_to_screen(vec2(x + width / 2.0, y + height / 2.0), rect);
+                let r = Rect::from_two_pos(p1, p2);
                 painter.rect(r, 4.0, fill_color, stroke, StrokeKind::Outside);
             }
             ObstacleShape::Circle { center, radius } => {
@@ -1085,25 +1166,79 @@ fn draw_obstacles(
     }
 }
 
-fn draw_robot(painter: &Painter, rect: Rect, state: &CanvasState, pose: [f32; 3]) {
+fn draw_route_strips(
+    painter: &Painter,
+    rect: Rect,
+    state: &CanvasState,
+    route_strips: &[(Color32, Vec<[f32; 2]>)],
+) {
+    for (color, strip) in route_strips {
+        if strip.len() < 2 {
+            continue;
+        }
+        let pts: Vec<Pos2> = strip
+            .iter()
+            .map(|p| state.world_to_screen(vec2(p[0], p[1]), rect))
+            .collect();
+        painter.add(egui::Shape::line(pts, Stroke::new(2.5, *color)));
+    }
+}
+
+fn draw_robot(painter: &Painter, rect: Rect, state: &CanvasState, pose: [f32; 3], glowing: bool) {
     let pos_world = vec2(pose[0], pose[1]);
     let theta = pose[2];
     let pos_screen = state.world_to_screen(pos_world, rect);
 
     let size_px = 16.0;
 
-    let dir = vec2(theta.cos(), -theta.sin());
+    // No sistema onde +X é para cima e +Y é para a esquerda:
+    // theta = 0 aponta para +X (para cima na tela: dir_screen = (0, -1))
+    // theta > 0 gira em direção a +Y (para a esquerda na tela: dir_screen = (-1, 0))
+    let dir = vec2(-theta.sin(), -theta.cos());
     let ortho = vec2(-dir.y, dir.x);
 
     let tip = pos_screen + dir * size_px;
-    let left = pos_screen - dir * (size_px * 0.5) + ortho * (size_px * 0.5);
-    let right = pos_screen - dir * (size_px * 0.5) - ortho * (size_px * 0.5);
+    let left = pos_screen - dir * (size_px * 0.5) - ortho * (size_px * 0.5);
+    let right = pos_screen - dir * (size_px * 0.5) + ortho * (size_px * 0.5);
 
-    let red_robot = Color32::from_rgb(240, 45, 45); // Vermelho Rerun
+    if glowing {
+        // Halo / aura brilhante em camadas concêntricas ao redor da seta do robô
+        let glow_center = pos_screen + dir * (size_px * 0.2);
+        painter.circle_filled(
+            glow_center,
+            size_px * 1.9,
+            Color32::from_rgba_unmultiplied(255, 210, 50, 35),
+        );
+        painter.circle_filled(
+            glow_center,
+            size_px * 1.35,
+            Color32::from_rgba_unmultiplied(255, 220, 80, 75),
+        );
+        let glow_tip = pos_screen + dir * (size_px * 1.25);
+        let glow_left = pos_screen - dir * (size_px * 0.65) - ortho * (size_px * 0.7);
+        let glow_right = pos_screen - dir * (size_px * 0.65) + ortho * (size_px * 0.7);
+        painter.add(egui::Shape::convex_polygon(
+            vec![glow_tip, glow_left, pos_screen, glow_right],
+            Color32::from_rgba_unmultiplied(255, 235, 110, 120),
+            Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 240, 150, 200)),
+        ));
+    }
+
+    let robot_fill = if glowing {
+        Color32::from_rgb(255, 195, 40) // Dourado brilhante quando ativo
+    } else {
+        Color32::from_rgb(240, 45, 45) // Vermelho Rerun padrão
+    };
+    let robot_stroke = if glowing {
+        Stroke::new(1.8, Color32::from_rgb(255, 250, 210))
+    } else {
+        Stroke::new(1.0, Color32::WHITE)
+    };
+
     painter.add(egui::Shape::convex_polygon(
         vec![tip, left, pos_screen, right],
-        red_robot,
-        Stroke::new(1.0, Color32::WHITE),
+        robot_fill,
+        robot_stroke,
     ));
 }
 
@@ -1310,5 +1445,42 @@ mod tests {
         assert_eq!(data.points.len(), 4);
         assert_eq!(data.points[2].x, 1.5);
         assert!(selection.contains_point(2));
+    }
+
+    #[test]
+    fn test_coordinate_system_conversions() {
+        let mut state = CanvasState::default();
+        state.pan = Vec2::ZERO;
+        state.zoom = 50.0;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let center = rect.center(); // (400.0, 300.0)
+
+        // Origem (0, 0) deve mapear exatamente para o centro da tela
+        let origin_screen = state.world_to_screen(Vec2::ZERO, rect);
+        assert_eq!(origin_screen, center);
+
+        // +X no mundo (1.0, 0.0) deve ser para CIMA (screen_y menor que center.y)
+        let x_pos_screen = state.world_to_screen(vec2(1.0, 0.0), rect);
+        assert_eq!(x_pos_screen.x, center.x);
+        assert_eq!(x_pos_screen.y, center.y - 50.0);
+
+        // +Y no mundo (0.0, 1.0) deve ser para a ESQUERDA (screen_x menor que center.x)
+        let y_pos_screen = state.world_to_screen(vec2(0.0, 1.0), rect);
+        assert_eq!(y_pos_screen.x, center.x - 50.0);
+        assert_eq!(y_pos_screen.y, center.y);
+
+        // Round-trip screen_to_world(world_to_screen)
+        let test_pts = [
+            vec2(0.0, 0.0),
+            vec2(2.5, -3.2),
+            vec2(-4.0, 1.8),
+            vec2(10.0, 12.0),
+        ];
+        for pt in test_pts {
+            let s = state.world_to_screen(pt, rect);
+            let w = state.screen_to_world(s, rect);
+            assert!((w.x - pt.x).abs() < 1e-4);
+            assert!((w.y - pt.y).abs() < 1e-4);
+        }
     }
 }

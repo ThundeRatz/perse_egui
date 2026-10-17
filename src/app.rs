@@ -481,6 +481,7 @@ impl App for MyApp {
                         {
                             if resp.success {
                                 self.mission_editor.file_path = resp.path.clone();
+                                crate::editor::notify_mission_saved();
                                 self.mission_editor.status_msg =
                                     format!("Arquivo '{}' salvo com sucesso no host!", resp.path);
                             } else {

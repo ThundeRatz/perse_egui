@@ -113,6 +113,7 @@ impl RewireIntegration {
 
     pub fn logic(&mut self, ctx: &Context, frame: &mut Frame) {
         eframe::App::logic(&mut self.viewer, ctx, frame);
+        crate::editor::space_view::sync_mission_points_to_rerun(self.viewer.rerun_app());
     }
 
     pub fn show(&mut self, ui: &mut Ui, frame: &mut Frame) {

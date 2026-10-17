@@ -15,13 +15,22 @@ use models::MissionData;
 use models::MissionSetCollection;
 #[cfg(feature = "viewer")]
 use sidebar::{EditorSidebar, Selection};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "viewer")]
 use toolbar::{ActiveTool, ToolBar};
 
 static SHARED_MISSION_SETS: OnceLock<Arc<Mutex<MissionSetCollection>>> = OnceLock::new();
 static SHARED_ZOOM_SPEED: AtomicU32 = AtomicU32::new(0);
+static MISSION_SAVE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn notify_mission_saved() {
+    MISSION_SAVE_GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn mission_save_generation() -> u64 {
+    MISSION_SAVE_GENERATION.load(Ordering::Relaxed)
+}
 
 pub fn get_shared_mission_sets() -> Arc<Mutex<MissionSetCollection>> {
     SHARED_MISSION_SETS

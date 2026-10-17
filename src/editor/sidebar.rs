@@ -319,6 +319,7 @@ impl EditorSidebar {
             match data.save_to_file(path) {
                 Ok(_) => {
                     let _ = sets_guard.save_to_file("mission_sets.json");
+                    crate::editor::notify_mission_saved();
                     *status_msg = format!("Arquivo '{}' salvo com sucesso!", path);
                 }
                 Err(e) => {
