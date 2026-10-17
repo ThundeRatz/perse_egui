@@ -46,6 +46,7 @@ fn normalize_proxy_target(endpoint: &str) -> String {
 #[derive(Clone)]
 pub struct HostState {
     pub packages: Arc<Mutex<Vec<PackageParams>>>,
+    pub workspace_path: Arc<Mutex<String>>,
     pub launch_packages: Arc<Mutex<Vec<LaunchPackage>>>,
     pub mission_collection: Arc<Mutex<MissionSetCollection>>,
     pub terminal_tabs: Arc<Mutex<Vec<TerminalTab>>>,
@@ -69,10 +70,24 @@ impl HostState {
                 MissionSetCollection::default()
             };
 
+        let default_ws = crate::config::default_workspace_path();
+
+        let scanned_pkgs =
+            crate::panels::parameters::workspace::scan_workspace_packages(&default_ws);
+        let initial_packages = if !scanned_pkgs.is_empty() {
+            re_log::info!(
+                "Daemon: Carregados {} pacotes ROS da workspace '{}'",
+                scanned_pkgs.len(),
+                default_ws
+            );
+            scanned_pkgs
+        } else {
+            crate::panels::parameters::create_mock_parameters()
+        };
+
         Self {
-            packages: Arc::new(Mutex::new(
-                crate::panels::parameters::create_mock_parameters(),
-            )),
+            packages: Arc::new(Mutex::new(initial_packages)),
+            workspace_path: Arc::new(Mutex::new(default_ws)),
             launch_packages: Arc::new(Mutex::new(
                 crate::panels::launchfiles::create_mock_launchfiles(),
             )),
@@ -405,6 +420,43 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                 );
                 let _ = host_state.tx_broadcast.send(resp);
             }
+            "refresh" => {
+                let ws_val = host_state
+                    .workspace_path
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| crate::config::default_workspace_path());
+                let scanned = crate::panels::parameters::workspace::scan_workspace_packages(&ws_val);
+                if !scanned.is_empty() {
+                    if let Ok(mut pkgs) = host_state.packages.lock() {
+                        *pkgs = scanned.clone();
+                    }
+                    re_log::info!(
+                        "Daemon: Workspace recarregada de '{}' ({} pacotes)",
+                        ws_val,
+                        scanned.len()
+                    );
+                    let resp = ControlMessage::new(
+                        Domain::Parameters,
+                        "tree_response",
+                        serde_json::to_value(ParametersTreeResponse {
+                            packages: scanned,
+                        })
+                        .unwrap_or_default(),
+                    );
+                    let _ = host_state.tx_broadcast.send(resp);
+                } else if let Ok(pkgs) = host_state.packages.lock() {
+                    let resp = ControlMessage::new(
+                        Domain::Parameters,
+                        "tree_response",
+                        serde_json::to_value(ParametersTreeResponse {
+                            packages: pkgs.clone(),
+                        })
+                        .unwrap_or_default(),
+                    );
+                    let _ = host_state.tx_broadcast.send(resp);
+                }
+            }
             "apply_params" => {
                 let mut applied_count = 0;
                 if let Ok(req) =
@@ -412,8 +464,34 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                 {
                     if !req.packages.is_empty() {
                         if let Ok(mut pkgs) = host_state.packages.lock() {
-                            applied_count = req.packages.len();
-                            *pkgs = req.packages;
+                            for req_pkg in &req.packages {
+                                if let Some(host_pkg) = pkgs.iter_mut().find(|p| p.name == req_pkg.name) {
+                                    for req_file in &req_pkg.files {
+                                        if let Some(host_file) = host_pkg.files.iter_mut().find(|f| f.filename == req_file.filename) {
+                                            if !req_file.path.is_empty() {
+                                                host_file.path = req_file.path.clone();
+                                            }
+                                            host_file.scopes = req_file.scopes.clone();
+                                        } else {
+                                            host_pkg.files.push(req_file.clone());
+                                        }
+                                    }
+                                } else {
+                                    pkgs.push(req_pkg.clone());
+                                }
+                            }
+                            if pkgs.is_empty() {
+                                *pkgs = req.packages;
+                            }
+                            match crate::panels::parameters::workspace::save_modified_packages(&mut pkgs) {
+                                Ok(saved) => {
+                                    applied_count = saved;
+                                    re_log::info!("Daemon: Salvos com sucesso {} arquivos de parâmetros no disco.", saved);
+                                }
+                                Err(err) => {
+                                    re_log::error!("Daemon: Erro ao salvar parâmetros: {}", err);
+                                }
+                            }
                             for p in pkgs.iter_mut() {
                                 p.apply_all();
                             }
@@ -428,8 +506,16 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                             let _ = host_state.tx_broadcast.send(resp);
                         }
                     } else if let Ok(mut pkgs) = host_state.packages.lock() {
+                        match crate::panels::parameters::workspace::save_modified_packages(&mut pkgs) {
+                            Ok(saved) => {
+                                applied_count = saved;
+                                re_log::info!("Daemon: Salvos com sucesso {} arquivos de parâmetros no disco.", saved);
+                            }
+                            Err(err) => {
+                                re_log::error!("Daemon: Erro ao salvar parâmetros: {}", err);
+                            }
+                        }
                         for p in pkgs.iter_mut() {
-                            applied_count += p.count_modified();
                             p.apply_all();
                         }
                         let resp = ControlMessage::new(
@@ -443,8 +529,16 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         let _ = host_state.tx_broadcast.send(resp);
                     }
                 } else if let Ok(mut pkgs) = host_state.packages.lock() {
+                    match crate::panels::parameters::workspace::save_modified_packages(&mut pkgs) {
+                        Ok(saved) => {
+                            applied_count = saved;
+                            re_log::info!("Daemon: Salvos com sucesso {} arquivos de parâmetros no disco.", saved);
+                        }
+                        Err(err) => {
+                            re_log::error!("Daemon: Erro ao salvar parâmetros: {}", err);
+                        }
+                    }
                     for p in pkgs.iter_mut() {
-                        applied_count += p.count_modified();
                         p.apply_all();
                     }
                     let resp = ControlMessage::new(
@@ -464,6 +558,33 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         .unwrap_or_default(),
                 );
                 let _ = host_state.tx_broadcast.send(resp);
+            }
+            "set_workspace" => {
+                if let Some(ws_val) = msg.payload.get("workspace").and_then(|v| v.as_str()) {
+                    if let Ok(mut ws_lock) = host_state.workspace_path.lock() {
+                        *ws_lock = ws_val.to_string();
+                    }
+                    let scanned = crate::panels::parameters::workspace::scan_workspace_packages(ws_val);
+                    if !scanned.is_empty() {
+                        if let Ok(mut pkgs) = host_state.packages.lock() {
+                            *pkgs = scanned.clone();
+                        }
+                        re_log::info!(
+                            "Daemon: Workspace atualizada para '{}' ({} pacotes)",
+                            ws_val,
+                            scanned.len()
+                        );
+                        let resp = ControlMessage::new(
+                            Domain::Parameters,
+                            "tree_response",
+                            serde_json::to_value(ParametersTreeResponse {
+                                packages: scanned,
+                            })
+                            .unwrap_or_default(),
+                        );
+                        let _ = host_state.tx_broadcast.send(resp);
+                    }
+                }
             }
             _ => {}
         },
@@ -872,6 +993,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::panels::parameters::ParameterValue;
     use axum::http::{header, Request};
     use tower::ServiceExt;
 
@@ -983,5 +1105,53 @@ mod tests {
         // Sem caminho customizado, deve resolver para um caminho (ex: ./web ou fallback)
         let default_resolved = resolve_web_directory(None);
         assert!(!default_resolved.as_os_str().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_daemon_handle_apply_params_and_refresh() {
+        let temp_dir = std::env::temp_dir().join(format!("test_daemon_params_{}", std::process::id()));
+        let pkg_dir = temp_dir.join("test_pkg");
+        let config_dir = pkg_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(pkg_dir.join("package.xml"), "<package><name>test_pkg</name></package>").unwrap();
+        let param_file = config_dir.join("params.yaml");
+        std::fs::write(&param_file, "test_node:\n  ros__parameters:\n    linear_speed: 1.0\n").unwrap();
+
+        let (tx, mut rx) = broadcast::channel(16);
+        let host_state = HostState::new(tx);
+        *host_state.workspace_path.lock().unwrap() = temp_dir.to_string_lossy().to_string();
+
+        // 1. Test Refresh
+        let refresh_msg = ControlMessage::new(Domain::Parameters, "refresh", serde_json::Value::Null);
+        handle_client_message(&refresh_msg, &host_state).await;
+
+        let broadcasted = rx.recv().await.unwrap();
+        assert_eq!(broadcasted.domain, Domain::Parameters);
+        assert_eq!(broadcasted.action, "tree_response");
+        let resp: ParametersTreeResponse = serde_json::from_value(broadcasted.payload).unwrap();
+        assert_eq!(resp.packages.len(), 1);
+        assert_eq!(resp.packages[0].name, "test_pkg");
+
+        // 2. Test Apply Params
+        let mut modified_packages = resp.packages.clone();
+        let param = &mut modified_packages[0].files[0].scopes[0].parameters[0];
+        param.edited_value = ParameterValue::Float(2.5);
+
+        let apply_msg = ControlMessage::new(
+            Domain::Parameters,
+            "apply_params",
+            serde_json::to_value(ApplyParametersRequest {
+                package: None,
+                packages: modified_packages,
+            })
+            .unwrap(),
+        );
+        handle_client_message(&apply_msg, &host_state).await;
+
+        // Verify the file was written to disk!
+        let updated_content = std::fs::read_to_string(&param_file).unwrap();
+        assert!(updated_content.contains("linear_speed: 2.5"));
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }

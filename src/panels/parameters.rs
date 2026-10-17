@@ -35,6 +35,28 @@ impl ParameterValue {
             ParameterValue::StringArray(_) => "string[]",
         }
     }
+
+    pub fn is_array(&self) -> bool {
+        matches!(
+            self,
+            ParameterValue::BoolArray(_)
+                | ParameterValue::IntArray(_)
+                | ParameterValue::FloatArray(_)
+                | ParameterValue::StringArray(_)
+                | ParameterValue::ByteArray(_)
+        )
+    }
+
+    pub fn array_len(&self) -> Option<usize> {
+        match self {
+            ParameterValue::BoolArray(v) => Some(v.len()),
+            ParameterValue::IntArray(v) => Some(v.len()),
+            ParameterValue::FloatArray(v) => Some(v.len()),
+            ParameterValue::StringArray(v) => Some(v.len()),
+            ParameterValue::ByteArray(v) => Some(v.len()),
+            _ => None,
+        }
+    }
 }
 
 /// Representa um único parâmetro ROS 2
@@ -149,10 +171,14 @@ impl Scope {
     }
 }
 
+pub mod workspace;
+
 /// Arquivo de parâmetros (.yaml / .yml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamFile {
     pub filename: String,
+    #[serde(default)]
+    pub path: String,
     pub scopes: Vec<Scope>,
 }
 
@@ -244,6 +270,7 @@ pub struct ParametersPanel {
     pub search_query: String,
     pub first_frame: bool,
     pub is_panel_focused: bool,
+    pub refresh_in_progress: bool,
 }
 
 #[cfg(feature = "viewer")]
@@ -255,6 +282,7 @@ impl Default for ParametersPanel {
             search_query: String::new(),
             first_frame: true,
             is_panel_focused: false,
+            refresh_in_progress: false,
         }
     }
 }
@@ -319,6 +347,7 @@ impl ParametersPanel {
         _state: &AppState,
         color_hierarchy: bool,
         client: Option<&crate::net::client::ControlClient>,
+        workspace_path: Option<&str>,
     ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
@@ -337,6 +366,9 @@ impl ParametersPanel {
                 ))
             });
             if ctrl_s_pressed {
+                let req_packages = self.packages.clone();
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = workspace::save_modified_packages(&mut self.packages);
                 self.apply_all();
                 if let Some(c) = client {
                     c.send(crate::net::protocol::ControlMessage::new(
@@ -344,7 +376,7 @@ impl ParametersPanel {
                         "apply_params",
                         serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
                             package: None,
-                            packages: self.packages.clone(),
+                            packages: req_packages,
                         })
                         .unwrap_or_default(),
                     ));
@@ -358,11 +390,12 @@ impl ParametersPanel {
             None,
             Apply,
             Discard,
+            Refresh,
         }
 
         let mut header_action = HeaderAction::None;
 
-        // Cabeçalho com busca e botão de Aplicar condicional
+        // Cabeçalho com busca, botões de Aplicar/Desfazer condicionais e botão de Atualizar
         section_header(
             ui,
             "Parâmetros",
@@ -386,16 +419,30 @@ impl ParametersPanel {
                         &re_ui::icons::RESET,
                         "Desfazer",
                     )
+                    .on_hover_text("Desfazer alterações não salvas")
                     .clicked()
                     {
                         header_action = HeaderAction::Discard;
                     }
+                }
+
+                if crate::panels::components::re_icon_button(
+                    ui,
+                    &re_ui::icons::RESET,
+                    "Recarregar parâmetros do disco",
+                )
+                .clicked()
+                {
+                    header_action = HeaderAction::Refresh;
                 }
             },
         );
 
         match header_action {
             HeaderAction::Apply => {
+                let req_packages = self.packages.clone();
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = workspace::save_modified_packages(&mut self.packages);
                 self.apply_all();
                 if let Some(c) = client {
                     c.send(crate::net::protocol::ControlMessage::new(
@@ -403,13 +450,35 @@ impl ParametersPanel {
                         "apply_params",
                         serde_json::to_value(crate::net::protocol::ApplyParametersRequest {
                             package: None,
-                            packages: self.packages.clone(),
+                            packages: req_packages,
                         })
                         .unwrap_or_default(),
                     ));
                 }
             }
             HeaderAction::Discard => self.discard_all(),
+            HeaderAction::Refresh => {
+                self.refresh_in_progress = true;
+                if let Some(c) = client {
+                    c.send(crate::net::protocol::ControlMessage::new(
+                        crate::net::protocol::Domain::Parameters,
+                        "refresh",
+                        serde_json::Value::Null,
+                    ));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let ws = workspace_path
+                        .filter(|p| !p.trim().is_empty())
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(crate::config::default_workspace_path);
+                    let scanned = workspace::scan_workspace_packages(&ws);
+                    if !scanned.is_empty() {
+                        self.packages = scanned;
+                        self.refresh_in_progress = false;
+                    }
+                }
+            }
             HeaderAction::None => {}
         }
 
@@ -565,7 +634,13 @@ fn render_param_file(
         RichText::new(title).color(Color32::from_gray(200))
     };
 
-    egui::CollapsingHeader::new(header_text)
+    let tooltip = if !file.path.is_empty() {
+        format!("Arquivo: {}\nCaminho: {}", file.filename, file.path)
+    } else {
+        format!("Arquivo: {}", file.filename)
+    };
+
+    let header_res = egui::CollapsingHeader::new(header_text)
         .id_salt(format!("file_collapsing_{}", path_prefix))
         .default_open(true)
         .open(open_override)
@@ -586,6 +661,7 @@ fn render_param_file(
                 }
             }
         });
+    header_res.header_response.on_hover_text(tooltip);
 }
 
 /// Renderiza escopos de forma recursiva com suporte a simplificação de caminhos de filho único (ex: nav/params/planner)
@@ -678,6 +754,7 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: boo
         ui.add_space(0.5);
 
         let is_modified = param.is_modified();
+        let is_array = param.edited_value.is_array();
 
         // Moldura com cor diferenciada se estiver em estado não salvo (unsaved state)
         let frame_bg = if is_modified {
@@ -711,53 +788,94 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: boo
             })
             .corner_radius(3.0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Nome do parâmetro e badge de tipo
-                    ui.label(
-                        RichText::new(&param.name)
-                            .strong()
-                            .size(11.5)
-                            .color(name_color),
-                    );
+                if !is_array {
+                    ui.horizontal(|ui| {
+                        // Nome do parâmetro e badge de tipo
+                        ui.label(
+                            RichText::new(&param.name)
+                                .strong()
+                                .size(11.5)
+                                .color(name_color),
+                        );
 
-                    ui.label(
-                        RichText::new(format!("[{}]", param.edited_value.type_name()))
+                        ui.label(
+                            RichText::new(format!("[{}]", param.edited_value.type_name()))
+                                .size(9.5)
+                                .color(Color32::from_gray(130)),
+                        );
+
+                        // Controle de entrada específico para o tipo de dado
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            render_scalar_value_input(ui, param);
+
+                            if is_modified
+                                && crate::panels::components::re_icon_button(
+                                    ui,
+                                    &re_ui::icons::RESET,
+                                    "Desfazer alteração",
+                                )
+                                .clicked()
+                            {
+                                param.discard();
+                            }
+                        });
+                    });
+                } else {
+                    // Parâmetros do tipo array: cabeçalho com nome, tipo e botão desfazer
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(&param.name)
+                                .strong()
+                                .size(11.5)
+                                .color(name_color),
+                        );
+
+                        let count_str = param
+                            .edited_value
+                            .array_len()
+                            .map(|l| format!("[{}]", l))
+                            .unwrap_or_default();
+                        ui.label(
+                            RichText::new(format!(
+                                "[{}{}]",
+                                param.edited_value.type_name().trim_end_matches("[]"),
+                                count_str
+                            ))
                             .size(9.5)
                             .color(Color32::from_gray(130)),
-                    );
+                        );
 
-                    // Controle de entrada específico para o tipo de dado.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        render_value_input(ui, param);
-
-                        if is_modified
-                            && crate::panels::components::re_icon_button(
-                                ui,
-                                &re_ui::icons::RESET,
-                                "Desfazer alteração",
-                            )
-                            .clicked()
-                        {
-                            param.discard();
+                        if is_modified {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if crate::panels::components::re_icon_button(
+                                    ui,
+                                    &re_ui::icons::RESET,
+                                    "Desfazer alteração",
+                                )
+                                .clicked()
+                                {
+                                    param.discard();
+                                }
+                            });
                         }
                     });
-                });
+
+                    // Linha abaixo: elementos do array em grid responsivo que quebra linhas
+                    ui.add_space(2.0);
+                    render_array_value_inputs(ui, param);
+                }
 
                 if !param.description.is_empty() {
-                    ui.label(
-                        RichText::new(&param.description)
-                            .size(9.5)
-                            .italics()
-                            .color(Color32::from_gray(135)),
-                    );
+                    ui.add_space(1.0);
+                    render_parameter_description(ui, &param.name, &param.description);
                 }
             });
     });
 }
 
-/// Renderiza o controle de input adequado para o tipo de dado do parâmetro ROS 2
+/// Renderiza o controle de input para parâmetros escalares (bool, int, float, string)
 #[cfg(feature = "viewer")]
-fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
+fn render_scalar_value_input(ui: &mut Ui, param: &mut Parameter) {
     match &mut param.edited_value {
         ParameterValue::Bool(ref mut val) => {
             ui.checkbox(val, "");
@@ -771,87 +889,237 @@ fn render_value_input(ui: &mut Ui, param: &mut Parameter) {
         ParameterValue::String(ref mut val) => {
             ui.add(egui::TextEdit::singleline(val).desired_width(110.0));
         }
-        ParameterValue::ByteArray(ref mut vec) => {
-            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
-                vec.iter()
-                    .map(|b| b.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            });
+        _ => {}
+    }
+}
+
+/// Renderiza os botões compactos de adicionar (+) e remover (-) elementos de arrays
+#[cfg(feature = "viewer")]
+fn render_vec_resize_buttons<T: Default + Clone>(ui: &mut Ui, vec: &mut Vec<T>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if ui
+            .button(RichText::new("+").size(10.0))
+            .on_hover_text("Adicionar elemento ao array")
+            .clicked()
+        {
+            vec.push(T::default());
+        }
+        if !vec.is_empty() {
             if ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
-                .changed()
+                .button(RichText::new("-").size(10.0))
+                .on_hover_text("Remover último elemento do array")
+                .clicked()
             {
-                param.array_text_buf = Some(text.clone());
-                let parsed: Vec<u8> = text
-                    .split(',')
-                    .filter_map(|s| s.trim().parse::<u8>().ok())
-                    .collect();
-                *vec = parsed;
+                vec.pop();
             }
         }
+    });
+}
+
+/// Renderiza os elementos de parâmetros do tipo array em layout de grid responsivo que quebra linhas
+#[cfg(feature = "viewer")]
+fn render_array_value_inputs(ui: &mut Ui, param: &mut Parameter) {
+    let is_empty = param.edited_value.array_len() == Some(0);
+    if is_empty {
+        ui.label(
+            RichText::new("(array vazio)")
+                .size(9.5)
+                .italics()
+                .color(Color32::from_gray(120)),
+        );
+    }
+
+    match &mut param.edited_value {
         ParameterValue::BoolArray(ref mut vec) => {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
                 for (idx, b) in vec.iter_mut().enumerate() {
-                    ui.checkbox(b, format!("{}", idx));
+                    ui.checkbox(b, RichText::new(format!("[{}]", idx)).size(10.0));
                 }
+                render_vec_resize_buttons(ui, vec);
             });
-        }
-        ParameterValue::IntArray(ref mut vec) => {
-            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
-                vec.iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            });
-            if ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
-                .changed()
-            {
-                param.array_text_buf = Some(text.clone());
-                let parsed: Vec<i64> = text
-                    .split(',')
-                    .filter_map(|s| s.trim().parse::<i64>().ok())
-                    .collect();
-                *vec = parsed;
-            }
         }
         ParameterValue::FloatArray(ref mut vec) => {
-            let mut text = param.array_text_buf.clone().unwrap_or_else(|| {
-                vec.iter()
-                    .map(|v| format!("{:.2}", v))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            });
-            if ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
-                .changed()
-            {
-                param.array_text_buf = Some(text.clone());
-                let parsed: Vec<f64> = text
-                    .split(',')
-                    .filter_map(|s| s.trim().parse::<f64>().ok())
-                    .collect();
-                *vec = parsed;
-            }
+            let avail_w = ui.available_width().min(ui.clip_rect().width());
+            let container_w = (avail_w - 16.0).max(60.0);
+            let col_w = 75.0;
+            let cols = ((container_w / col_w).floor() as usize).max(1);
+
+            let grid_id = ui.id().with("param_grid").with(&param.name);
+            egui::Grid::new(grid_id)
+                .spacing([4.0, 3.0])
+                .show(ui, |ui| {
+                    for (idx, val) in vec.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.label(
+                                RichText::new(format!("[{}]:", idx))
+                                    .size(9.5)
+                                    .color(Color32::from_gray(140)),
+                            );
+                            ui.add_sized(
+                                [45.0, 18.0],
+                                egui::DragValue::new(val).speed(0.01).max_decimals(4),
+                            );
+                        });
+                        if (idx + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                    if !vec.is_empty() && vec.len() % cols != 0 {
+                        ui.end_row();
+                    }
+                });
+
+            render_vec_resize_buttons(ui, vec);
+        }
+        ParameterValue::IntArray(ref mut vec) => {
+            let avail_w = ui.available_width().min(ui.clip_rect().width());
+            let container_w = (avail_w - 16.0).max(60.0);
+            let col_w = 75.0;
+            let cols = ((container_w / col_w).floor() as usize).max(1);
+
+            let grid_id = ui.id().with("param_grid").with(&param.name);
+            egui::Grid::new(grid_id)
+                .spacing([4.0, 3.0])
+                .show(ui, |ui| {
+                    for (idx, val) in vec.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.label(
+                                RichText::new(format!("[{}]:", idx))
+                                    .size(9.5)
+                                    .color(Color32::from_gray(140)),
+                            );
+                            ui.add_sized([45.0, 18.0], egui::DragValue::new(val).speed(1));
+                        });
+                        if (idx + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                    if !vec.is_empty() && vec.len() % cols != 0 {
+                        ui.end_row();
+                    }
+                });
+
+            render_vec_resize_buttons(ui, vec);
+        }
+        ParameterValue::ByteArray(ref mut vec) => {
+            let avail_w = ui.available_width().min(ui.clip_rect().width());
+            let container_w = (avail_w - 16.0).max(60.0);
+            let col_w = 65.0;
+            let cols = ((container_w / col_w).floor() as usize).max(1);
+
+            let grid_id = ui.id().with("param_grid").with(&param.name);
+            egui::Grid::new(grid_id)
+                .spacing([4.0, 3.0])
+                .show(ui, |ui| {
+                    for (idx, val) in vec.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.label(
+                                RichText::new(format!("[{}]:", idx))
+                                    .size(9.5)
+                                    .color(Color32::from_gray(140)),
+                            );
+                            ui.add_sized(
+                                [35.0, 18.0],
+                                egui::DragValue::new(val).range(0..=255),
+                            );
+                        });
+                        if (idx + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                    if !vec.is_empty() && vec.len() % cols != 0 {
+                        ui.end_row();
+                    }
+                });
+
+            render_vec_resize_buttons(ui, vec);
         }
         ParameterValue::StringArray(ref mut vec) => {
-            let mut text = param
-                .array_text_buf
-                .clone()
-                .unwrap_or_else(|| vec.join(", "));
-            if ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(110.0))
-                .changed()
-            {
-                param.array_text_buf = Some(text.clone());
-                let parsed: Vec<String> = text
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                *vec = parsed;
-            }
+            let avail_w = ui.available_width().min(ui.clip_rect().width());
+            let container_w = (avail_w - 16.0).max(60.0);
+            let col_w = 110.0;
+            let cols = ((container_w / col_w).floor() as usize).max(1);
+
+            let grid_id = ui.id().with("param_grid").with(&param.name);
+            egui::Grid::new(grid_id)
+                .spacing([4.0, 3.0])
+                .show(ui, |ui| {
+                    for (idx, s) in vec.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.label(
+                                RichText::new(format!("[{}]:", idx))
+                                    .size(9.5)
+                                    .color(Color32::from_gray(140)),
+                            );
+                            ui.add(egui::TextEdit::singleline(s).desired_width(75.0));
+                        });
+                        if (idx + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                    if !vec.is_empty() && vec.len() % cols != 0 {
+                        ui.end_row();
+                    }
+                });
+
+            render_vec_resize_buttons(ui, vec);
+        }
+        _ => {}
+    }
+}
+
+/// Renderiza a descrição/comentário do parâmetro com limitação para 5 linhas e alternância expandir/recolher
+#[cfg(feature = "viewer")]
+fn render_parameter_description(ui: &mut Ui, param_name: &str, description: &str) {
+    let lines: Vec<&str> = description.lines().collect();
+    if lines.len() <= 5 {
+        // Exatamente como antes, sem alterações visuais para comentários de até 5 linhas
+        ui.label(
+            RichText::new(description)
+                .size(9.5)
+                .italics()
+                .color(Color32::from_gray(135)),
+        );
+    } else {
+        // Mais de 5 linhas: truncar por padrão e permitir expandir/contrair ao clicar
+        let id = ui.id().with("param_desc_expanded").with(param_name);
+        let mut expanded = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+
+        let (display_text, toggle_label) = if expanded {
+            (description.to_string(), "▲ Recolher comentário")
+        } else {
+            let truncated = lines[..5].join("\n");
+            (format!("{}...", truncated), "▼ Expandir comentário...")
+        };
+
+        let label_response = ui.add(
+            egui::Label::new(
+                RichText::new(&display_text)
+                    .size(9.5)
+                    .italics()
+                    .color(Color32::from_gray(135)),
+            )
+            .sense(egui::Sense::click()),
+        );
+
+        let btn_response = ui.add(
+            egui::Button::new(
+                RichText::new(toggle_label)
+                    .size(9.0)
+                    .color(Color32::from_rgb(110, 165, 235)),
+            )
+            .frame(false),
+        );
+
+        if label_response.clicked() || btn_response.clicked() {
+            expanded = !expanded;
+            ui.data_mut(|d| d.insert_temp(id, expanded));
         }
     }
 }
@@ -863,6 +1131,7 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
             name: "perse_navigation".into(),
             files: vec![ParamFile {
                 filename: "nav2_params.yaml".into(),
+                path: String::new(),
                 scopes: vec![
                     // Exemplo 1: nav -> params -> planner (caminho único -> simplifica para nav/params/planner)
                     Scope {
@@ -951,6 +1220,7 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
             name: "perse_control".into(),
             files: vec![ParamFile {
                 filename: "controllers.yaml".into(),
+                path: String::new(),
                 scopes: vec![Scope {
                     name: "diff_drive_controller".into(),
                     sub_scopes: vec![],
@@ -996,6 +1266,7 @@ pub fn create_mock_parameters() -> Vec<PackageParams> {
             name: "perse_sensors".into(),
             files: vec![ParamFile {
                 filename: "lidar_params.yaml".into(),
+                path: String::new(),
                 scopes: vec![Scope {
                     name: "rplidar_node".into(),
                     sub_scopes: vec![],
@@ -1049,5 +1320,64 @@ mod tests {
         let param_after =
             &panel.packages[0].files[0].scopes[0].sub_scopes[0].sub_scopes[0].parameters[0];
         assert_eq!(param_after.saved_value, ParameterValue::Float(2.5));
+    }
+
+    #[test]
+    #[cfg(feature = "viewer")]
+    fn test_parameter_value_array_helpers() {
+        let b_arr = ParameterValue::BoolArray(vec![true, false, true]);
+        assert!(b_arr.is_array());
+        assert_eq!(b_arr.array_len(), Some(3));
+
+        let f_arr = ParameterValue::FloatArray(vec![1.0, 2.0]);
+        assert!(f_arr.is_array());
+        assert_eq!(f_arr.array_len(), Some(2));
+
+        let scalar_f = ParameterValue::Float(1.0);
+        assert!(!scalar_f.is_array());
+        assert_eq!(scalar_f.array_len(), None);
+
+        let scalar_b = ParameterValue::Bool(true);
+        assert!(!scalar_b.is_array());
+        assert_eq!(scalar_b.array_len(), None);
+    }
+
+    #[test]
+    #[cfg(feature = "viewer")]
+    fn test_array_parameter_modification_and_discard() {
+        let mut param = Parameter::new(
+            "test_cov",
+            "Matrix covariance",
+            ParameterValue::FloatArray(vec![0.1, 0.2, 0.3]),
+        );
+        assert!(!param.is_modified());
+
+        // Modify array
+        if let ParameterValue::FloatArray(ref mut v) = param.edited_value {
+            v[0] = 0.99;
+        }
+        assert!(param.is_modified());
+
+        // Discard
+        param.discard();
+        assert!(!param.is_modified());
+        assert_eq!(
+            param.edited_value,
+            ParameterValue::FloatArray(vec![0.1, 0.2, 0.3])
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "viewer")]
+    fn test_comment_line_splitting() {
+        let short_desc = "Line 1\nLine 2\nLine 3";
+        assert!(short_desc.lines().count() <= 5);
+
+        let long_desc = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7";
+        let lines: Vec<&str> = long_desc.lines().collect();
+        assert_eq!(lines.len(), 7);
+        assert!(lines.len() > 5);
+        let truncated = lines[..5].join("\n");
+        assert_eq!(truncated.lines().count(), 5);
     }
 }

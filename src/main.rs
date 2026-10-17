@@ -30,6 +30,10 @@ struct Cli {
     /// Diretório dos arquivos WebAssembly (padrão: busca em "web", no diretório do binário ou no pacote ROS)
     #[arg(long)]
     web_dir: Option<String>,
+
+    /// Caminho da workspace ROS para pacotes e arquivos de parâmetros
+    #[arg(long)]
+    workspace: Option<String>,
 }
 
 #[cfg(feature = "viewer")]
@@ -39,6 +43,10 @@ static GLOBAL: re_memory::AccountingAllocator<mimalloc::MiMalloc> =
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    if let Some(ref ws) = cli.workspace {
+        std::env::set_var("ROS_WORKSPACE", ws);
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

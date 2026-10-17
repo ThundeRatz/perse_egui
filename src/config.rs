@@ -11,6 +11,22 @@ fn default_mission_file_path() -> String {
     "mission_points.yaml".to_string()
 }
 
+pub fn default_workspace_path() -> String {
+    if let Ok(ws) = std::env::var("ROS_WORKSPACE") {
+        let trimmed = ws.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(root) = crate::panels::parameters::workspace::find_workspace_root(".") {
+            return root.to_string_lossy().to_string();
+        }
+    }
+    ".".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     pub endpoint: String,
@@ -27,6 +43,8 @@ pub struct AppConfig {
     pub is_display_options_open: bool,
     #[serde(default = "default_true")]
     pub color_parameter_hierarchy: bool,
+    #[serde(default = "default_workspace_path")]
+    pub workspace_path: String,
 }
 
 impl Default for AppConfig {
@@ -42,6 +60,7 @@ impl Default for AppConfig {
             canvas_display_options: ViewVisibilityOptions::default(),
             is_display_options_open: true,
             color_parameter_hierarchy: true,
+            workspace_path: default_workspace_path(),
         }
     }
 }

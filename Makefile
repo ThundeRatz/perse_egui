@@ -18,7 +18,7 @@ else
     TARGET_ARCH := $(ARCH)
 endif
 
-.PHONY: all prepare build build-daemon build-web download install install-user daemon run run-web run-daemon service clean help
+.PHONY: all prepare build build-daemon build-web download install install-user daemon run run-binary run-daemon service clean help
 
 help:
 	@echo "=========================================================================="
@@ -36,6 +36,7 @@ help:
 	@echo "  make run-daemon   - Roda o servidor daemon headless via Cargo na porta $(PORT)"
 	@echo "  make daemon       - Executa binário existente em modo daemon na porta $(PORT)"
 	@echo "  make run          - Executa a interface nativa conectando em $(CONNECT)"
+	@echo "  make run-binary   - Executa a interface nativa conectando em $(CONNECT) usando o binario"
 	@echo "  make service      - Cria e configura serviço systemd para rodar daemon no boot"
 	@echo "  make clean        - Limpa os artefatos compilados"
 	@echo "=========================================================================="
@@ -92,12 +93,15 @@ daemon:
 	elif [ -f target/release/perse_egui ]; then \
 		target/release/perse_egui --daemon --port $(PORT) --connect $(CONNECT); \
 	else \
-		$(MAKE) run-web; \
+		$(MAKE) run-daemon; \
 	fi
 
+run-binary:
+	target/release/perse_egui --connect $(CONNECT); \
+
 run:
-	@if [ -f target/release/perse_egui ]; then \
-		target/release/perse_egui --connect $(CONNECT); \
+	@if ! command -v cargo >/dev/null && [ -f target/release/perse_egui ]; then \
+		$(MAKE) run-binary; \
 	else \
 		cargo run --release -- --connect $(CONNECT); \
 	fi

@@ -81,6 +81,11 @@ impl MyApp {
                     config.mission_file_path = mfp;
                 }
             }
+            if let Some(ws) = storage.get_string("perse_egui.workspace_path") {
+                if !ws.trim().is_empty() {
+                    config.workspace_path = ws;
+                }
+            }
             if let Some(sets_json) = storage.get_string("perse_egui.mission_sets") {
                 if let Ok(loaded_sets) =
                     serde_json::from_str::<crate::editor::models::MissionSetCollection>(&sets_json)
@@ -163,6 +168,22 @@ impl MyApp {
         mission_editor.canvas_state.view_options = config.canvas_display_options.clone();
         mission_editor.file_path = config.mission_file_path.clone();
 
+        let mut parameters_panel = ParametersPanel::default();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let scanned = crate::panels::parameters::workspace::scan_workspace_packages(
+                &config.workspace_path,
+            );
+            if !scanned.is_empty() {
+                re_log::info!(
+                    "Carregados {} pacotes da workspace ROS '{}'",
+                    scanned.len(),
+                    config.workspace_path
+                );
+                parameters_panel.packages = scanned;
+            }
+        }
+
         let control_client = crate::net::client::ControlClient::new();
         let ws_url = crate::net::client::ControlClient::default_url(&config.endpoint);
         control_client.connect(&ws_url);
@@ -173,7 +194,7 @@ impl MyApp {
             view_mode: ViewMode::default(),
             config,
             state: AppState::default(),
-            parameters_panel: ParametersPanel::default(),
+            parameters_panel,
             launchfiles_panel: LaunchfilesPanel::default(),
             terminals_panel: TerminalsPanel::default(),
             settings_panel: SettingsPanel::default(),
@@ -241,6 +262,10 @@ impl App for MyApp {
         if let Ok(sets_json) = serde_json::to_string(&current_sets) {
             storage.set_string("perse_egui.mission_sets", sets_json);
         }
+        storage.set_string(
+            "perse_egui.workspace_path",
+            self.config.workspace_path.clone(),
+        );
 
         // 2. No desktop nativo, salvar também diretamente em disco
         #[cfg(not(target_arch = "wasm32"))]
@@ -326,7 +351,12 @@ impl App for MyApp {
                             crate::net::protocol::ParametersTreeResponse,
                         >(msg.payload)
                         {
-                            self.parameters_panel.update_from_remote(resp.packages);
+                            if self.parameters_panel.refresh_in_progress {
+                                self.parameters_panel.packages = resp.packages;
+                                self.parameters_panel.refresh_in_progress = false;
+                            } else {
+                                self.parameters_panel.update_from_remote(resp.packages);
+                            }
                         }
                     }
                 }
@@ -640,6 +670,7 @@ impl App for MyApp {
                             &self.state,
                             self.config.color_parameter_hierarchy,
                             Some(&self.control_client),
+                            Some(&self.config.workspace_path),
                         );
                     });
 
@@ -661,7 +692,24 @@ impl App for MyApp {
             });
 
         // Modal de configurações
+        let old_ws = self.config.workspace_path.clone();
         self.settings_panel.ui(ui.ctx(), &mut self.config);
+        if self.config.workspace_path != old_ws {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let scanned = crate::panels::parameters::workspace::scan_workspace_packages(
+                    &self.config.workspace_path,
+                );
+                if !scanned.is_empty() {
+                    self.parameters_panel.packages = scanned;
+                }
+            }
+            self.control_client.send(crate::net::protocol::ControlMessage::new(
+                crate::net::protocol::Domain::Parameters,
+                "set_workspace",
+                serde_json::json!({ "workspace": self.config.workspace_path }),
+            ));
+        }
         crate::editor::set_shared_zoom_speed(self.config.zoom_speed);
 
         // Exibição central de acordo com o modo selecionado
