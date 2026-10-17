@@ -30,6 +30,8 @@ pub struct MyApp {
     terminals_panel: TerminalsPanel,
     settings_panel: SettingsPanel,
     control_client: crate::net::client::ControlClient,
+    was_connected: bool,
+    last_reconnect_attempt: f64,
 }
 
 impl MyApp {
@@ -176,7 +178,16 @@ impl MyApp {
             terminals_panel: TerminalsPanel::default(),
             settings_panel: SettingsPanel::default(),
             control_client,
+            was_connected: false,
+            last_reconnect_attempt: 0.0,
         })
+    }
+
+    /// Dispara reconexão no cliente de controle e no visualizador Rerun/Rewire
+    pub fn reconnect(&mut self) {
+        re_log::info!("Disparando reconexão manual/automática...");
+        self.control_client.reconnect();
+        self.rewire.reconnect();
     }
 }
 
@@ -267,6 +278,42 @@ impl App for MyApp {
 
     fn logic(&mut self, ctx: &Context, frame: &mut Frame) {
         self.rewire.logic(ctx, frame);
+
+        let is_connected = self.control_client.is_connected();
+        let now = ctx.input(|i| i.time);
+
+        // Detecta quando a conexão é restabelecida com o Host
+        if is_connected && !self.was_connected {
+            self.was_connected = true;
+            re_log::info!("Conexão com o Host restabelecida. Re-sincronizando Rerun e painéis...");
+            self.rewire.reconnect();
+            // Requisita dados atualizados do host para popular todos os painéis
+            self.control_client.send(crate::net::protocol::ControlMessage::new(
+                crate::net::protocol::Domain::Parameters,
+                "get_tree",
+                serde_json::Value::Null,
+            ));
+            self.control_client.send(crate::net::protocol::ControlMessage::new(
+                crate::net::protocol::Domain::Launchfiles,
+                "get_list",
+                serde_json::Value::Null,
+            ));
+            self.control_client.send(crate::net::protocol::ControlMessage::new(
+                crate::net::protocol::Domain::Mission,
+                "get_data",
+                serde_json::Value::Null,
+            ));
+        } else if !is_connected {
+            self.was_connected = false;
+            // Garante repaints periódicos para que o temporizador continue rodando mesmo sem interação do mouse
+            ctx.request_repaint_after(std::time::Duration::from_millis(1500));
+
+            // Auto-reconexão periódica a cada 3 segundos caso não haja conexão em andamento
+            if !self.control_client.is_connecting() && (now - self.last_reconnect_attempt) >= 3.0 {
+                self.last_reconnect_attempt = now;
+                self.reconnect();
+            }
+        }
     }
 
     fn ui(&mut self, ui: &mut Ui, frame: &mut Frame) {
@@ -519,7 +566,7 @@ impl App for MyApp {
                     };
                 }
 
-                // Indicador do Host WebSocket à direita
+                // Indicador do Host WebSocket e botão de reconexão à direita
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let is_conn = self.control_client.is_connected();
                     let dot_color = if is_conn {
@@ -527,12 +574,43 @@ impl App for MyApp {
                     } else {
                         egui::Color32::from_rgb(240, 180, 50)
                     };
+
+                    if !is_conn {
+                        let is_connecting = self.control_client.is_connecting();
+                        let btn_text = if is_connecting {
+                            "⏳ Conectando..."
+                        } else {
+                            "🔄 Reconectar"
+                        };
+                        let reconnect_btn = ui.add_enabled(
+                            !is_connecting,
+                            egui::Button::new(
+                                egui::RichText::new(btn_text)
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(220, 220, 220)),
+                            ),
+                        );
+                        if reconnect_btn
+                            .on_hover_text("Tentar reconectar ao Host WebSocket e ao stream Rerun agora")
+                            .clicked()
+                        {
+                            let now = ui.ctx().input(|i| i.time);
+                            self.last_reconnect_attempt = now;
+                            self.reconnect();
+                        }
+                    }
+
                     let label = if is_conn {
                         "● Host Conectado".to_string()
                     } else {
                         format!("○ {}", self.control_client.status_message())
                     };
-                    ui.label(egui::RichText::new(label).color(dot_color).size(11.0));
+                    ui.label(egui::RichText::new(label).color(dot_color).size(11.0))
+                        .on_hover_text(if is_conn {
+                            "Conectado ao Host do robô"
+                        } else {
+                            "Desconectado do Host. Tentativa automática em segundo plano a cada 3s."
+                        });
                 });
             });
         });

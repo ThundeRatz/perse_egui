@@ -18,6 +18,7 @@ pub struct ControlClient {
     is_connected: Arc<AtomicBool>,
     status_message: Arc<Mutex<String>>,
     incoming_queue: Arc<Mutex<Vec<ControlMessage>>>,
+    last_url: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     native_tx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>>,
     #[cfg(target_arch = "wasm32")]
@@ -30,6 +31,7 @@ impl Default for ControlClient {
             is_connected: Arc::new(AtomicBool::new(false)),
             status_message: Arc::new(Mutex::new("Desconectado".to_string())),
             incoming_queue: Arc::new(Mutex::new(Vec::new())),
+            last_url: Arc::new(Mutex::new(None)),
             #[cfg(not(target_arch = "wasm32"))]
             native_tx: Arc::new(Mutex::new(None)),
             #[cfg(target_arch = "wasm32")]
@@ -109,6 +111,9 @@ impl ControlClient {
     /// Conecta ao endpoint WebSocket `/ws/control`
     pub fn connect(&self, url: &str) {
         let url_str = url.to_string();
+        if let Ok(mut lu) = self.last_url.lock() {
+            *lu = Some(url_str.clone());
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -214,6 +219,17 @@ impl ControlClient {
 
         #[cfg(target_arch = "wasm32")]
         {
+            // Fecha e desassocia handlers de socket anterior para evitar callbacks conflitantes
+            if let Ok(mut g) = self.wasm_ws.lock() {
+                if let Some(old_ws) = g.take() {
+                    let _ = old_ws.set_onopen(None);
+                    let _ = old_ws.set_onmessage(None);
+                    let _ = old_ws.set_onclose(None);
+                    let _ = old_ws.set_onerror(None);
+                    let _ = old_ws.close();
+                }
+            }
+
             if let Ok(mut st) = self.status_message.lock() {
                 *st = format!("Conectando a {}...", url_str);
             }
@@ -340,6 +356,39 @@ impl ControlClient {
             false
         }
     }
+
+    /// Dispara reconexão utilizando a última URL conhecida ou a URL padrão
+    pub fn reconnect(&self) {
+        let url = self
+            .last_url
+            .lock()
+            .ok()
+            .and_then(|u| u.clone())
+            .unwrap_or_else(|| Self::default_url(""));
+        self.connect(&url);
+    }
+
+    /// Verifica se a conexão está atualmente em progresso
+    pub fn is_connecting(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Ok(g) = self.wasm_ws.lock() {
+                if let Some(ref ws) = *g {
+                    return ws.ready_state() == WebSocket::CONNECTING;
+                }
+            }
+            false
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
+    }
+
+    /// Retorna a última URL de conexão configurada
+    pub fn last_url(&self) -> Option<String> {
+        self.last_url.lock().ok().and_then(|u| u.clone())
+    }
 }
 
 #[cfg(test)]
@@ -359,5 +408,17 @@ mod tests {
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0], msg);
         assert_eq!(client.drain_messages().len(), 0);
+    }
+
+    #[test]
+    fn test_client_reconnect_url_tracking() {
+        let client = ControlClient::new();
+        assert_eq!(client.last_url(), None);
+        assert!(!client.is_connected());
+        assert!(!client.is_connecting());
+
+        let url = "ws://127.0.0.1:8080/ws/control";
+        client.connect(url);
+        assert_eq!(client.last_url(), Some(url.to_string()));
     }
 }

@@ -12,6 +12,8 @@ pub type IntegrationResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub struct RewireIntegration {
     viewer: RewireApp,
+    #[cfg(target_arch = "wasm32")]
+    stream_url: String,
     #[cfg(not(target_arch = "wasm32"))]
     _control_handle: MessageProxyHandle,
 }
@@ -87,8 +89,26 @@ impl RewireIntegration {
             }
 
             let viewer = RewireApp::new(rerun_app);
-            Ok(Self { viewer })
+            Ok(Self {
+                viewer,
+                stream_url: url,
+            })
         }
+    }
+
+    pub fn reconnect(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.stream_url.is_empty() {
+                re_log::info!("Reconectando ao stream Rerun/Rewire: {}", self.stream_url);
+                self.viewer.open_url_or_file(&self.stream_url);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn stream_url(&self) -> &str {
+        &self.stream_url
     }
 
     pub fn logic(&mut self, ctx: &Context, frame: &mut Frame) {
