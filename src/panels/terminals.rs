@@ -555,7 +555,7 @@ fn render_tab_pill(ui: &mut Ui, title: &str, is_running: bool, is_active: bool) 
     (clicked_tab, clicked_close)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "viewer"))]
 mod tests {
     use super::*;
 
