@@ -626,8 +626,7 @@ motors_node:
 
         servo_offset: 0.0
 "#;
-        let param_file =
-            parse_yaml_param_file(yaml_text, "test.yaml", "/path/test.yaml").unwrap();
+        let param_file = parse_yaml_param_file(yaml_text, "test.yaml", "/path/test.yaml").unwrap();
         assert_eq!(param_file.scopes.len(), 1);
         let node_scope = &param_file.scopes[0];
         assert_eq!(node_scope.name, "motors_node");
@@ -679,7 +678,10 @@ motors_node:
         let ws = "/home/alan/Documents/repos/perse";
         if std::path::Path::new(ws).exists() {
             let packages = scan_workspace_packages(ws);
-            assert!(!packages.is_empty(), "Deveria encontrar pacotes na workspace do Perse");
+            assert!(
+                !packages.is_empty(),
+                "Deveria encontrar pacotes na workspace do Perse"
+            );
 
             let has_bringup = packages.iter().any(|p| p.name == "perse_bringup");
             let has_drivers = packages.iter().any(|p| p.name == "perse_drivers");

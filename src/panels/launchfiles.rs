@@ -146,9 +146,9 @@ impl LaunchPackage {
     }
 }
 
-pub mod workspace;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod process_manager;
+pub mod workspace;
 
 /// Painel de Launchfiles
 #[cfg(feature = "viewer")]
@@ -698,7 +698,11 @@ fn render_launch_file(
 }
 
 #[cfg(feature = "viewer")]
-fn update_status_recursive(files: &mut [LaunchFile], filename: &str, new_status: LaunchStatus) -> bool {
+fn update_status_recursive(
+    files: &mut [LaunchFile],
+    filename: &str,
+    new_status: LaunchStatus,
+) -> bool {
     for f in files {
         if f.name == filename {
             f.status = new_status;
@@ -720,7 +724,11 @@ fn merge_launch_file(local_files: &mut Vec<LaunchFile>, remote_file: LaunchFile)
 
         // Atualiza argumentos sem sobrescrever modificações locais do usuário
         for remote_arg in remote_file.args {
-            if let Some(local_arg) = local_file.args.iter_mut().find(|a| a.name == remote_arg.name) {
+            if let Some(local_arg) = local_file
+                .args
+                .iter_mut()
+                .find(|a| a.name == remote_arg.name)
+            {
                 local_arg.default_value = remote_arg.default_value;
                 local_arg.from_file = remote_arg.from_file;
                 // Mantém local_arg.value! Se o usuário digitou algo, permanece salvo.
@@ -747,9 +755,7 @@ pub fn create_mock_launchfiles() -> Vec<LaunchPackage> {
                     LaunchKind::Python,
                     "Inicia todos os drivers de sensores e controladores hardware",
                 )
-                .with_arguments(vec![
-                    LaunchArgument::new_custom("use_sim_time", "false"),
-                ]),
+                .with_arguments(vec![LaunchArgument::new_custom("use_sim_time", "false")]),
                 LaunchFile::new(
                     "master_system.launch.xml",
                     LaunchKind::Xml,

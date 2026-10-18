@@ -1248,12 +1248,7 @@ fn draw_robot(painter: &Painter, rect: Rect, state: &CanvasState, pose: [f32; 3]
     ));
 }
 
-fn draw_look_ahead_point(
-    painter: &Painter,
-    rect: Rect,
-    state: &CanvasState,
-    point: [f32; 2],
-) {
+fn draw_look_ahead_point(painter: &Painter, rect: Rect, state: &CanvasState, point: [f32; 2]) {
     let screen_pos = state.world_to_screen(vec2(point[0], point[1]), rect);
 
     // Halo / Anel externo translúcido
@@ -1263,11 +1258,7 @@ fn draw_look_ahead_point(
         Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 170, 0, 180)),
     );
     // Ponto central vibrante cor laranja/âmbar
-    painter.circle_filled(
-        screen_pos,
-        4.5,
-        Color32::from_rgb(255, 185, 30),
-    );
+    painter.circle_filled(screen_pos, 4.5, Color32::from_rgb(255, 185, 30));
     // Cruz central
     let arm = 7.0;
     let stroke_cross = Stroke::new(1.2, Color32::from_rgb(255, 230, 100));

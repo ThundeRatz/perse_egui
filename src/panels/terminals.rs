@@ -202,12 +202,7 @@ impl TerminalsPanel {
         }
     }
 
-    pub fn ui(
-        &mut self,
-        ui: &mut Ui,
-        client: Option<&ControlClient>,
-        config: Option<&AppConfig>,
-    ) {
+    pub fn ui(&mut self, ui: &mut Ui, client: Option<&ControlClient>, config: Option<&AppConfig>) {
         // Inicializa o seletor padrão de acordo com a configuração de LaunchTargetMode
         if !self.initialized_target_from_config {
             if let Some(cfg) = config {
@@ -235,10 +230,7 @@ impl TerminalsPanel {
                     LocalPtyEvent::Exit(id) => {
                         if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
                             s.is_running = false;
-                            s.process_bytes(
-                                b"\r\n\x1b[33m[Processo finalizado]\x1b[0m\r\n",
-                                now,
-                            );
+                            s.process_bytes(b"\r\n\x1b[33m[Processo finalizado]\x1b[0m\r\n", now);
                             got_local_output = true;
                         }
                     }
@@ -291,10 +283,7 @@ impl TerminalsPanel {
         if self.sessions.is_empty() {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Nenhum terminal aberto.")
-                        .color(Color32::from_gray(150)),
-                );
+                ui.label(RichText::new("Nenhum terminal aberto.").color(Color32::from_gray(150)));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("+ Novo Terminal (Host)").clicked() {
@@ -448,12 +437,7 @@ fn current_time_ms() -> u64 {
 }
 
 #[cfg(feature = "viewer")]
-fn render_tab_pill(
-    ui: &mut Ui,
-    title: &str,
-    is_running: bool,
-    is_active: bool,
-) -> (bool, bool) {
+fn render_tab_pill(ui: &mut Ui, title: &str, is_running: bool, is_active: bool) -> (bool, bool) {
     let dot_color = if is_running {
         Color32::from_rgb(80, 210, 120)
     } else {
@@ -509,9 +493,7 @@ fn render_tab_pill(
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new("✕")
-                                .size(10.5)
-                                .color(Color32::from_gray(150)),
+                            RichText::new("✕").size(10.5).color(Color32::from_gray(150)),
                         )
                         .frame(false),
                     )

@@ -329,21 +329,24 @@ impl App for MyApp {
             re_log::info!("Conexão com o Host restabelecida. Re-sincronizando Rerun e painéis...");
             self.rewire.reconnect();
             // Requisita dados atualizados do host para popular todos os painéis
-            self.control_client.send(crate::net::protocol::ControlMessage::new(
-                crate::net::protocol::Domain::Parameters,
-                "get_tree",
-                serde_json::Value::Null,
-            ));
-            self.control_client.send(crate::net::protocol::ControlMessage::new(
-                crate::net::protocol::Domain::Launchfiles,
-                "get_list",
-                serde_json::Value::Null,
-            ));
-            self.control_client.send(crate::net::protocol::ControlMessage::new(
-                crate::net::protocol::Domain::Mission,
-                "get_data",
-                serde_json::Value::Null,
-            ));
+            self.control_client
+                .send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Parameters,
+                    "get_tree",
+                    serde_json::Value::Null,
+                ));
+            self.control_client
+                .send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Launchfiles,
+                    "get_list",
+                    serde_json::Value::Null,
+                ));
+            self.control_client
+                .send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Mission,
+                    "get_data",
+                    serde_json::Value::Null,
+                ));
         } else if !is_connected {
             self.was_connected = false;
             // Garante repaints periódicos para que o temporizador continue rodando mesmo sem interação do mouse
@@ -638,7 +641,9 @@ impl App for MyApp {
                         ),
                     );
                     if reconnect_btn
-                        .on_hover_text("Tentar reconectar ao Host WebSocket e ao stream Rerun agora")
+                        .on_hover_text(
+                            "Tentar reconectar ao Host WebSocket e ao stream Rerun agora",
+                        )
                         .clicked()
                     {
                         let now = ui.ctx().input(|i| i.time);
@@ -673,8 +678,13 @@ impl App for MyApp {
             );
             let mut center_ui = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_size(center_pos, egui::vec2(btn_width, btn_height)))
-                    .layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)),
+                    .max_rect(egui::Rect::from_min_size(
+                        center_pos,
+                        egui::vec2(btn_width, btn_height),
+                    ))
+                    .layout(egui::Layout::centered_and_justified(
+                        egui::Direction::LeftToRight,
+                    )),
             );
             if crate::panels::components::re_icon_toggle_button(
                 &mut center_ui,
@@ -750,11 +760,8 @@ impl App for MyApp {
             .size_range(40.0..=right_max)
             .frame(egui::Frame::new().fill(panel_bg).inner_margin(0.0))
             .show_collapsible(ui, &mut show_right_sidebar, |ui| {
-                self.terminals_panel.ui(
-                    ui,
-                    Some(&self.control_client),
-                    Some(&self.config),
-                );
+                self.terminals_panel
+                    .ui(ui, Some(&self.control_client), Some(&self.config));
             });
         self.config.show_right_sidebar = show_right_sidebar;
 
@@ -779,11 +786,12 @@ impl App for MyApp {
                     self.launchfiles_panel.packages = scanned_launches;
                 }
             }
-            self.control_client.send(crate::net::protocol::ControlMessage::new(
-                crate::net::protocol::Domain::Parameters,
-                "set_workspace",
-                serde_json::json!({ "workspace": self.config.workspace_path }),
-            ));
+            self.control_client
+                .send(crate::net::protocol::ControlMessage::new(
+                    crate::net::protocol::Domain::Parameters,
+                    "set_workspace",
+                    serde_json::json!({ "workspace": self.config.workspace_path }),
+                ));
         }
         crate::editor::set_shared_zoom_speed(self.config.zoom_speed);
 

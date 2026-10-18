@@ -61,7 +61,9 @@ impl RewireIntegration {
                     let target_rbl = dest_dir.join("rewire.rbl");
                     if !target_rbl.exists() {
                         if let Err(err) = std::fs::copy(&default_bpt, &target_rbl) {
-                            re_log::warn!("Falha ao copiar blueprint padrão para {target_rbl:?}: {err}");
+                            re_log::warn!(
+                                "Falha ao copiar blueprint padrão para {target_rbl:?}: {err}"
+                            );
                         } else {
                             re_log::info!("Blueprint padrão semeado com sucesso em {target_rbl:?}");
                         }

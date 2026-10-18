@@ -877,17 +877,20 @@ fn render_parameter_row(ui: &mut Ui, param: &mut Parameter, color_hierarchy: boo
                         );
 
                         if is_modified {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if crate::panels::components::re_icon_button(
-                                    ui,
-                                    &re_ui::icons::RESET,
-                                    "Desfazer alteração",
-                                )
-                                .clicked()
-                                {
-                                    param.discard();
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if crate::panels::components::re_icon_button(
+                                        ui,
+                                        &re_ui::icons::RESET,
+                                        "Desfazer alteração",
+                                    )
+                                    .clicked()
+                                    {
+                                        param.discard();
+                                    }
+                                },
+                            );
                         }
                     });
 
@@ -978,30 +981,28 @@ fn render_array_value_inputs(ui: &mut Ui, param: &mut Parameter) {
             let cols = ((container_w / col_w).floor() as usize).max(1);
 
             let grid_id = ui.id().with("param_grid").with(&param.name);
-            egui::Grid::new(grid_id)
-                .spacing([4.0, 3.0])
-                .show(ui, |ui| {
-                    for (idx, val) in vec.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            ui.label(
-                                RichText::new(format!("[{}]:", idx))
-                                    .size(9.5)
-                                    .color(Color32::from_gray(140)),
-                            );
-                            ui.add_sized(
-                                [45.0, 18.0],
-                                egui::DragValue::new(val).speed(0.01).max_decimals(4),
-                            );
-                        });
-                        if (idx + 1) % cols == 0 {
-                            ui.end_row();
-                        }
-                    }
-                    if !vec.is_empty() && vec.len() % cols != 0 {
+            egui::Grid::new(grid_id).spacing([4.0, 3.0]).show(ui, |ui| {
+                for (idx, val) in vec.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(
+                            RichText::new(format!("[{}]:", idx))
+                                .size(9.5)
+                                .color(Color32::from_gray(140)),
+                        );
+                        ui.add_sized(
+                            [45.0, 18.0],
+                            egui::DragValue::new(val).speed(0.01).max_decimals(4),
+                        );
+                    });
+                    if (idx + 1) % cols == 0 {
                         ui.end_row();
                     }
-                });
+                }
+                if !vec.is_empty() && vec.len() % cols != 0 {
+                    ui.end_row();
+                }
+            });
 
             render_vec_resize_buttons(ui, vec);
         }
@@ -1012,27 +1013,25 @@ fn render_array_value_inputs(ui: &mut Ui, param: &mut Parameter) {
             let cols = ((container_w / col_w).floor() as usize).max(1);
 
             let grid_id = ui.id().with("param_grid").with(&param.name);
-            egui::Grid::new(grid_id)
-                .spacing([4.0, 3.0])
-                .show(ui, |ui| {
-                    for (idx, val) in vec.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            ui.label(
-                                RichText::new(format!("[{}]:", idx))
-                                    .size(9.5)
-                                    .color(Color32::from_gray(140)),
-                            );
-                            ui.add_sized([45.0, 18.0], egui::DragValue::new(val).speed(1));
-                        });
-                        if (idx + 1) % cols == 0 {
-                            ui.end_row();
-                        }
-                    }
-                    if !vec.is_empty() && vec.len() % cols != 0 {
+            egui::Grid::new(grid_id).spacing([4.0, 3.0]).show(ui, |ui| {
+                for (idx, val) in vec.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(
+                            RichText::new(format!("[{}]:", idx))
+                                .size(9.5)
+                                .color(Color32::from_gray(140)),
+                        );
+                        ui.add_sized([45.0, 18.0], egui::DragValue::new(val).speed(1));
+                    });
+                    if (idx + 1) % cols == 0 {
                         ui.end_row();
                     }
-                });
+                }
+                if !vec.is_empty() && vec.len() % cols != 0 {
+                    ui.end_row();
+                }
+            });
 
             render_vec_resize_buttons(ui, vec);
         }
@@ -1043,30 +1042,25 @@ fn render_array_value_inputs(ui: &mut Ui, param: &mut Parameter) {
             let cols = ((container_w / col_w).floor() as usize).max(1);
 
             let grid_id = ui.id().with("param_grid").with(&param.name);
-            egui::Grid::new(grid_id)
-                .spacing([4.0, 3.0])
-                .show(ui, |ui| {
-                    for (idx, val) in vec.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            ui.label(
-                                RichText::new(format!("[{}]:", idx))
-                                    .size(9.5)
-                                    .color(Color32::from_gray(140)),
-                            );
-                            ui.add_sized(
-                                [35.0, 18.0],
-                                egui::DragValue::new(val).range(0..=255),
-                            );
-                        });
-                        if (idx + 1) % cols == 0 {
-                            ui.end_row();
-                        }
-                    }
-                    if !vec.is_empty() && vec.len() % cols != 0 {
+            egui::Grid::new(grid_id).spacing([4.0, 3.0]).show(ui, |ui| {
+                for (idx, val) in vec.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(
+                            RichText::new(format!("[{}]:", idx))
+                                .size(9.5)
+                                .color(Color32::from_gray(140)),
+                        );
+                        ui.add_sized([35.0, 18.0], egui::DragValue::new(val).range(0..=255));
+                    });
+                    if (idx + 1) % cols == 0 {
                         ui.end_row();
                     }
-                });
+                }
+                if !vec.is_empty() && vec.len() % cols != 0 {
+                    ui.end_row();
+                }
+            });
 
             render_vec_resize_buttons(ui, vec);
         }
@@ -1077,27 +1071,25 @@ fn render_array_value_inputs(ui: &mut Ui, param: &mut Parameter) {
             let cols = ((container_w / col_w).floor() as usize).max(1);
 
             let grid_id = ui.id().with("param_grid").with(&param.name);
-            egui::Grid::new(grid_id)
-                .spacing([4.0, 3.0])
-                .show(ui, |ui| {
-                    for (idx, s) in vec.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            ui.label(
-                                RichText::new(format!("[{}]:", idx))
-                                    .size(9.5)
-                                    .color(Color32::from_gray(140)),
-                            );
-                            ui.add(egui::TextEdit::singleline(s).desired_width(75.0));
-                        });
-                        if (idx + 1) % cols == 0 {
-                            ui.end_row();
-                        }
-                    }
-                    if !vec.is_empty() && vec.len() % cols != 0 {
+            egui::Grid::new(grid_id).spacing([4.0, 3.0]).show(ui, |ui| {
+                for (idx, s) in vec.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(
+                            RichText::new(format!("[{}]:", idx))
+                                .size(9.5)
+                                .color(Color32::from_gray(140)),
+                        );
+                        ui.add(egui::TextEdit::singleline(s).desired_width(75.0));
+                    });
+                    if (idx + 1) % cols == 0 {
                         ui.end_row();
                     }
-                });
+                }
+                if !vec.is_empty() && vec.len() % cols != 0 {
+                    ui.end_row();
+                }
+            });
 
             render_vec_resize_buttons(ui, vec);
         }

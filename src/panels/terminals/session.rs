@@ -66,7 +66,13 @@ pub struct TerminalSession {
 
 impl TerminalSession {
     /// Creates a new terminal session with specified dimensions.
-    pub fn with_size(id: String, title: String, target: TerminalTarget, cols: u16, rows: u16) -> Self {
+    pub fn with_size(
+        id: String,
+        title: String,
+        target: TerminalTarget,
+        cols: u16,
+        rows: u16,
+    ) -> Self {
         let cols = cols.max(10);
         let rows = rows.max(2);
         Self {
@@ -102,8 +108,16 @@ impl TerminalSession {
         let max_c = (cols as usize).saturating_sub(1);
 
         for row in start.0..=end.0.min(max_r) {
-            let col_start = if row == start.0 { start.1.min(max_c) } else { 0 };
-            let col_end = if row == end.0 { end.1.min(max_c) } else { max_c };
+            let col_start = if row == start.0 {
+                start.1.min(max_c)
+            } else {
+                0
+            };
+            let col_end = if row == end.0 {
+                end.1.min(max_c)
+            } else {
+                max_c
+            };
 
             let mut line = String::new();
             for col in col_start..=col_end {
@@ -191,8 +205,7 @@ impl TerminalSession {
     /// Reconstructs a `vt100::Parser` containing all bytes received up to `target_timestamp_ms`.
     /// This enables scrubbing the terminal state along the Rerun timeline in the future.
     pub fn replay_at_timestamp(&self, target_timestamp_ms: u64) -> vt100::Parser {
-        let mut replay_parser =
-            vt100::Parser::new(self.rows, self.cols, DEFAULT_SCROLLBACK_LEN);
+        let mut replay_parser = vt100::Parser::new(self.rows, self.cols, DEFAULT_SCROLLBACK_LEN);
         for (ts, chunk) in &self.chunks_history {
             if *ts <= target_timestamp_ms {
                 replay_parser.process(chunk);
@@ -288,20 +301,47 @@ mod tests {
             session.process_bytes(format!("{} {}\r\n", i, "=".repeat(60)).as_bytes(), i as u64);
         }
 
-        println!("--- BEFORE RESIZE (scrollback = {}) ---", session.parser.screen().scrollback());
-        let last_lines: Vec<_> = session.parser.screen().contents().lines().rev().take(5).map(|s| s.to_string()).collect();
+        println!(
+            "--- BEFORE RESIZE (scrollback = {}) ---",
+            session.parser.screen().scrollback()
+        );
+        let last_lines: Vec<_> = session
+            .parser
+            .screen()
+            .contents()
+            .lines()
+            .rev()
+            .take(5)
+            .map(|s| s.to_string())
+            .collect();
         println!("Last lines: {:?}", last_lines);
 
         // Narrow to 40 cols
         session.resize(40, 24);
         println!("--- AFTER NARROW TO 40 COLS ---");
-        let last_lines: Vec<_> = session.parser.screen().contents().lines().rev().take(5).map(|s| s.to_string()).collect();
+        let last_lines: Vec<_> = session
+            .parser
+            .screen()
+            .contents()
+            .lines()
+            .rev()
+            .take(5)
+            .map(|s| s.to_string())
+            .collect();
         println!("Last lines: {:?}", last_lines);
 
         // Expand to 100 cols
         session.resize(100, 24);
         println!("--- AFTER EXPAND TO 100 COLS ---");
-        let last_lines: Vec<_> = session.parser.screen().contents().lines().rev().take(5).map(|s| s.to_string()).collect();
+        let last_lines: Vec<_> = session
+            .parser
+            .screen()
+            .contents()
+            .lines()
+            .rev()
+            .take(5)
+            .map(|s| s.to_string())
+            .collect();
         println!("Last lines: {:?}", last_lines);
     }
 
@@ -350,12 +390,21 @@ mod tests {
     #[test]
     fn test_app_cursor() {
         let mut session = TerminalSession::new("test".into(), "test".into(), TerminalTarget::Host);
-        println!("Initial app_cursor: {}", session.parser.screen().application_cursor());
+        println!(
+            "Initial app_cursor: {}",
+            session.parser.screen().application_cursor()
+        );
         session.process_bytes(b"\x1b[?1h", 0);
-        println!("After \\x1b[?1h app_cursor: {}", session.parser.screen().application_cursor());
+        println!(
+            "After \\x1b[?1h app_cursor: {}",
+            session.parser.screen().application_cursor()
+        );
         assert!(session.parser.screen().application_cursor());
         session.process_bytes(b"\x1b[?1l", 0);
-        println!("After \\x1b[?1l app_cursor: {}", session.parser.screen().application_cursor());
+        println!(
+            "After \\x1b[?1l app_cursor: {}",
+            session.parser.screen().application_cursor()
+        );
         assert!(!session.parser.screen().application_cursor());
     }
 }

@@ -299,22 +299,37 @@ pub fn extract_xml_args(content: &str) -> Vec<LaunchArgument> {
                 // Extrai default se presente (ou value se usado como default)
                 let default_val = if let Some(d_idx) = tag_content.find("default=\"") {
                     let after = &tag_content[d_idx + 9..];
-                    after.find('"').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                    after
+                        .find('"')
+                        .map(|end| after[..end].trim().to_string())
+                        .unwrap_or_default()
                 } else if let Some(d_idx) = tag_content.find("default='") {
                     let after = &tag_content[d_idx + 9..];
-                    after.find('\'').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                    after
+                        .find('\'')
+                        .map(|end| after[..end].trim().to_string())
+                        .unwrap_or_default()
                 } else if let Some(v_idx) = tag_content.find("value=\"") {
                     let after = &tag_content[v_idx + 7..];
-                    after.find('"').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                    after
+                        .find('"')
+                        .map(|end| after[..end].trim().to_string())
+                        .unwrap_or_default()
                 } else if let Some(v_idx) = tag_content.find("value='") {
                     let after = &tag_content[v_idx + 7..];
-                    after.find('\'').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                    after
+                        .find('\'')
+                        .map(|end| after[..end].trim().to_string())
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
 
                 // Deduplica por nome: mantém a primeira ocorrência (ou atualiza se a existente estiver sem valor default)
-                if let Some(existing) = args.iter_mut().find(|a: &&mut LaunchArgument| a.name == name) {
+                if let Some(existing) = args
+                    .iter_mut()
+                    .find(|a: &&mut LaunchArgument| a.name == name)
+                {
                     if existing.default_value.is_empty() && !default_val.is_empty() {
                         existing.default_value = default_val;
                     }
@@ -581,7 +596,10 @@ import os
 
             // planner.launch e localization.launch foram incluídos em perse.launch, portanto não devem estar na raiz de perse_bringup
             assert!(
-                !b_pkg.launch_files.iter().any(|f| f.name == "planner.launch"),
+                !b_pkg
+                    .launch_files
+                    .iter()
+                    .any(|f| f.name == "planner.launch"),
                 "planner.launch não deve estar duplicado na raiz do pacote"
             );
         }

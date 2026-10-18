@@ -4,7 +4,11 @@ use egui::{Event, ImeEvent, Key, Modifiers};
 /// Converte uma lista de eventos do `egui` capturados enquanto o terminal possui foco
 /// em uma sequência de bytes ANSI pronta para ser enviada ao stdin do PTY.
 #[cfg(feature = "viewer")]
-pub fn extract_terminal_input_bytes(events: &[Event], app_cursor: bool, has_selection: bool) -> Vec<u8> {
+pub fn extract_terminal_input_bytes(
+    events: &[Event],
+    app_cursor: bool,
+    has_selection: bool,
+) -> Vec<u8> {
     let mut out = Vec::new();
 
     for event in events {
@@ -54,7 +58,8 @@ pub fn map_key_press(
     has_selection: bool,
 ) -> Option<Vec<u8>> {
     // Se houver seleção ativa, Ctrl+C / Cmd+C copia para o clipboard e não deve enviar 0x03 (SIGINT)
-    if has_selection && (modifiers.ctrl || modifiers.command || modifiers.mac_cmd) && key == Key::C {
+    if has_selection && (modifiers.ctrl || modifiers.command || modifiers.mac_cmd) && key == Key::C
+    {
         return None;
     }
 
@@ -62,7 +67,7 @@ pub fn map_key_press(
     if modifiers.alt && !modifiers.ctrl {
         match key {
             Key::Backspace => return Some(vec![0x1b, 0x7f]), // Alt+Backspace: apaga palavra anterior (Readline/Zsh)
-            Key::ArrowLeft => return Some(b"\x1bb".to_vec()),  // Alt+Left: recua palavra
+            Key::ArrowLeft => return Some(b"\x1bb".to_vec()), // Alt+Left: recua palavra
             Key::ArrowRight => return Some(b"\x1bf".to_vec()), // Alt+Right: avança palavra
             Key::ArrowUp => return Some(b"\x1b[1;3A".to_vec()),
             Key::ArrowDown => return Some(b"\x1b[1;3B".to_vec()),
@@ -222,9 +227,18 @@ mod tests {
     #[test]
     fn test_navigation_and_special_keys() {
         let none = Modifiers::NONE;
-        assert_eq!(map_key_press(Key::Enter, none, false, false), Some(b"\r".to_vec()));
-        assert_eq!(map_key_press(Key::Backspace, none, false, false), Some(vec![0x7f]));
-        assert_eq!(map_key_press(Key::Tab, none, false, false), Some(b"\t".to_vec()));
+        assert_eq!(
+            map_key_press(Key::Enter, none, false, false),
+            Some(b"\r".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::Backspace, none, false, false),
+            Some(vec![0x7f])
+        );
+        assert_eq!(
+            map_key_press(Key::Tab, none, false, false),
+            Some(b"\t".to_vec())
+        );
         assert_eq!(
             map_key_press(
                 Key::Tab,
@@ -237,8 +251,14 @@ mod tests {
             ),
             Some(b"\x1b[Z".to_vec())
         );
-        assert_eq!(map_key_press(Key::ArrowUp, none, false, false), Some(b"\x1b[A".to_vec()));
-        assert_eq!(map_key_press(Key::ArrowUp, none, true, false), Some(b"\x1bOA".to_vec()));
+        assert_eq!(
+            map_key_press(Key::ArrowUp, none, false, false),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::ArrowUp, none, true, false),
+            Some(b"\x1bOA".to_vec())
+        );
         assert_eq!(
             map_key_press(Key::ArrowDown, none, false, false),
             Some(b"\x1b[B".to_vec())
@@ -263,11 +283,26 @@ mod tests {
             map_key_press(Key::ArrowLeft, none, true, false),
             Some(b"\x1bOD".to_vec())
         );
-        assert_eq!(map_key_press(Key::Home, none, false, false), Some(b"\x1b[H".to_vec()));
-        assert_eq!(map_key_press(Key::Home, none, true, false), Some(b"\x1bOH".to_vec()));
-        assert_eq!(map_key_press(Key::End, none, false, false), Some(b"\x1b[F".to_vec()));
-        assert_eq!(map_key_press(Key::End, none, true, false), Some(b"\x1bOF".to_vec()));
-        assert_eq!(map_key_press(Key::Delete, none, false, false), Some(b"\x1b[3~".to_vec()));
+        assert_eq!(
+            map_key_press(Key::Home, none, false, false),
+            Some(b"\x1b[H".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::Home, none, true, false),
+            Some(b"\x1bOH".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::End, none, false, false),
+            Some(b"\x1b[F".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::End, none, true, false),
+            Some(b"\x1bOF".to_vec())
+        );
+        assert_eq!(
+            map_key_press(Key::Delete, none, false, false),
+            Some(b"\x1b[3~".to_vec())
+        );
 
         // Alt combinations
         let alt = Modifiers {
@@ -308,4 +343,3 @@ mod tests {
         assert_eq!(bytes, "ãé".as_bytes().to_vec());
     }
 }
-

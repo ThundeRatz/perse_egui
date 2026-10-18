@@ -54,17 +54,17 @@ pub fn vt100_color_to_egui(color: vt100::Color, is_fg: bool, bold: bool) -> egui
 fn ansi_idx_to_rgb(idx: u8) -> egui::Color32 {
     match idx {
         // Standard 16 colors (modern dark theme palette)
-        0 => egui::Color32::from_rgb(30, 34, 42),    // Black
+        0 => egui::Color32::from_rgb(30, 34, 42), // Black
         1 => egui::Color32::from_rgb(224, 108, 117), // Red
         2 => egui::Color32::from_rgb(152, 195, 121), // Green
         3 => egui::Color32::from_rgb(229, 192, 123), // Yellow
-        4 => egui::Color32::from_rgb(97, 175, 239),  // Blue
+        4 => egui::Color32::from_rgb(97, 175, 239), // Blue
         5 => egui::Color32::from_rgb(198, 120, 221), // Magenta
-        6 => egui::Color32::from_rgb(86, 182, 194),  // Cyan
+        6 => egui::Color32::from_rgb(86, 182, 194), // Cyan
         7 => egui::Color32::from_rgb(171, 178, 191), // White (light gray)
         // Bright 8..15
-        8 => egui::Color32::from_rgb(92, 99, 112),    // Bright Black (gray)
-        9 => egui::Color32::from_rgb(244, 135, 113),  // Bright Red
+        8 => egui::Color32::from_rgb(92, 99, 112), // Bright Black (gray)
+        9 => egui::Color32::from_rgb(244, 135, 113), // Bright Red
         10 => egui::Color32::from_rgb(181, 232, 144), // Bright Green
         11 => egui::Color32::from_rgb(240, 214, 145), // Bright Yellow
         12 => egui::Color32::from_rgb(130, 196, 248), // Bright Blue
@@ -200,10 +200,8 @@ pub fn show_terminal_widget(
         let (cur_row, cur_col) = session.parser.screen().cursor_position();
         let cx = origin.x + f32::from(cur_col) * char_width;
         let cy = origin.y + f32::from(cur_row) * char_height;
-        let cursor_rect = egui::Rect::from_min_size(
-            egui::pos2(cx, cy),
-            egui::vec2(char_width, char_height),
-        );
+        let cursor_rect =
+            egui::Rect::from_min_size(egui::pos2(cx, cy), egui::vec2(char_width, char_height));
         let to_global = ui
             .ctx()
             .layer_transform_to_global(ui.layer_id())
@@ -259,7 +257,8 @@ pub fn show_terminal_widget(
                         pressed: true,
                         modifiers,
                         ..
-                    } = e {
+                    } = e
+                    {
                         (modifiers.ctrl || modifiers.command || modifiers.mac_cmd) && !modifiers.alt
                     } else {
                         matches!(e, egui::Event::Copy)
@@ -330,10 +329,8 @@ pub fn show_terminal_widget(
                 char_width
             };
 
-            let cell_rect = egui::Rect::from_min_size(
-                egui::pos2(x, y),
-                egui::vec2(cell_w, char_height),
-            );
+            let cell_rect =
+                egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cell_w, char_height));
 
             let bold = cell.bold();
             let mut fg = vt100_color_to_egui(cell.fgcolor(), true, bold);
@@ -389,10 +386,8 @@ pub fn show_terminal_widget(
         if cur_row < rows && cur_col < cols {
             let cx = origin.x + f32::from(cur_col) * char_width;
             let cy = origin.y + f32::from(cur_row) * char_height;
-            let cursor_rect = egui::Rect::from_min_size(
-                egui::pos2(cx, cy),
-                egui::vec2(char_width, char_height),
-            );
+            let cursor_rect =
+                egui::Rect::from_min_size(egui::pos2(cx, cy), egui::vec2(char_width, char_height));
 
             if has_focus {
                 painter.rect_filled(
@@ -427,7 +422,10 @@ pub fn show_terminal_widget(
 
     // Show a subtle scrollback badge if user scrolled up in history
     if scrollback_offset > 0 {
-        let badge_text = format!("↑ Scrollback: {} linhas (Role para baixo ou digite)", scrollback_offset);
+        let badge_text = format!(
+            "↑ Scrollback: {} linhas (Role para baixo ou digite)",
+            scrollback_offset
+        );
         let badge_pos = egui::pos2(rect.max.x - 10.0, rect.min.y + 8.0);
         painter.text(
             badge_pos,

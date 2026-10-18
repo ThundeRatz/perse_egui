@@ -52,10 +52,7 @@ pub fn sync_mission_points_to_rerun(rerun_app: &re_viewer::App) {
     ensure_mission_points_logged(recording, &rerun_app.command_sender);
 }
 
-pub fn ensure_mission_points_logged(
-    recording: &EntityDb,
-    command_sender: &CommandSender,
-) {
+pub fn ensure_mission_points_logged(recording: &EntityDb, command_sender: &CommandSender) {
     let store_id = recording.store_id().clone();
     let current_gen = crate::editor::mission_save_generation();
 
@@ -263,10 +260,8 @@ impl ViewClass for MissionSpaceView {
             recording,
             &[LineStrips3D::descriptor_strips().component],
         );
-        let glow_candidates = find_entities_with_any_component(
-            recording,
-            &[Scalars::descriptor_scalars().component],
-        );
+        let glow_candidates =
+            find_entities_with_any_component(recording, &[Scalars::descriptor_scalars().component]);
         let points_candidates = find_entities_with_any_component(
             recording,
             &[
@@ -358,16 +353,13 @@ impl ViewClass for MissionSpaceView {
         let recording = ctx.recording();
 
         // 1. Consultar pontos da missão na timeline (com fallback para o conjunto ativo em memória)
-        let mission_data = query_mission_data_at_timeline(
-            recording,
-            &latest_query,
-            &state.points_entity,
-        )
-        .unwrap_or_else(|| {
-            let sets_arc = crate::editor::get_shared_mission_sets();
-            let guard = sets_arc.lock().unwrap_or_else(|e| e.into_inner());
-            guard.active_data().cloned().unwrap_or_default()
-        });
+        let mission_data =
+            query_mission_data_at_timeline(recording, &latest_query, &state.points_entity)
+                .unwrap_or_else(|| {
+                    let sets_arc = crate::editor::get_shared_mission_sets();
+                    let guard = sets_arc.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.active_data().cloned().unwrap_or_default()
+                });
 
         for pt in &mission_data.points {
             for k in pt.extra.keys() {
@@ -376,8 +368,7 @@ impl ViewClass for MissionSpaceView {
         }
 
         // 2. Consultar pose do robô (InstancePoses3D) na timeline
-        let robot_pose =
-            query_robot_pose_at_timeline(recording, &latest_query, &state.pose_entity);
+        let robot_pose = query_robot_pose_at_timeline(recording, &latest_query, &state.pose_entity);
 
         // 3. Consultar brilho do robô (Scalars: 0 ou 1) na timeline
         let robot_glowing =
@@ -492,9 +483,14 @@ fn query_mission_data_at_timeline(
     let pos_comp = Points2D::descriptor_positions().component;
     let rad_comp = Points2D::descriptor_radii().component;
 
-    if let Some(data) =
-        query_mission_data_at_entity(recording, query, &entity_path, text_comp, pos_comp, rad_comp)
-    {
+    if let Some(data) = query_mission_data_at_entity(
+        recording,
+        query,
+        &entity_path,
+        text_comp,
+        pos_comp,
+        rad_comp,
+    ) {
         return Some(data);
     }
 
@@ -555,10 +551,7 @@ fn query_mission_data_at_entity(
                 .map(|r| r.0 .0)
                 .unwrap_or(0.5);
             let mut extra = indexmap::IndexMap::new();
-            extra.insert(
-                "margin".to_string(),
-                serde_yaml::Value::from(margin as f64),
-            );
+            extra.insert("margin".to_string(), serde_yaml::Value::from(margin as f64));
             MissionPoint {
                 x: pos.0 .0[0],
                 y: pos.0 .0[1],
@@ -640,10 +633,7 @@ fn query_robot_pose_at_timeline(
         let [x, y, _z] = translation.map(|t| t.0 .0).unwrap_or([0.0, 0.0, 0.0]);
         let yaw = if let Some(q) = quat {
             let [qx, qy, qz, qw] = q.0 .0;
-            f32::atan2(
-                2.0 * (qw * qz + qx * qy),
-                1.0 - 2.0 * (qy * qy + qz * qz),
-            )
+            f32::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         } else if let Some(aa) = axis_angle {
             let axis_z = aa.0.axis.0[2];
             aa.0.angle.radians() * if axis_z >= 0.0 { 1.0 } else { -1.0 }
@@ -810,10 +800,7 @@ mod tests {
         let tp2 = TimePoint::from([(tl, TimeInt::new_temporal(20))]);
 
         let chunk1 = Chunk::builder(EntityPath::from(MISSION_POINTS_ENTITY_PATH))
-            .with_archetype_auto_row(
-                tp1.clone(),
-                &Points2D::new([[1.0, 2.0]]).with_radii([0.5]),
-            )
+            .with_archetype_auto_row(tp1.clone(), &Points2D::new([[1.0, 2.0]]).with_radii([0.5]))
             .with_archetype_auto_row(
                 tp1,
                 &TextDocument::new(serde_json::to_string(&data_t1).unwrap()),
@@ -977,5 +964,3 @@ mod tests {
         assert_eq!(pt2, [3.8, 5.2]);
     }
 }
-
-

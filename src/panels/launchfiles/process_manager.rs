@@ -59,7 +59,8 @@ pub fn parse_launch_command(cmdline: &str) -> Option<(String, String)> {
     if positional.len() == 1 {
         let p = Path::new(positional[0]);
         let filename = p.file_name()?.to_string_lossy().to_string();
-        if filename.ends_with(".py") || filename.ends_with(".xml") || filename.ends_with(".launch") {
+        if filename.ends_with(".py") || filename.ends_with(".xml") || filename.ends_with(".launch")
+        {
             return Some((String::new(), filename));
         }
     }
@@ -134,7 +135,9 @@ fn parse_ps_output(ps_output: &str) -> Vec<RunningLaunch> {
         }
 
         let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let Some(pid_str) = parts.next() else { continue };
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
         let Some(cmd) = parts.next() else { continue };
 
         let Ok(pid) = pid_str.parse::<u32>() else {
@@ -258,13 +261,7 @@ pub async fn stop_launch_async(
             }
             LaunchTargetMode::Docker => {
                 let _ = tokio::process::Command::new("docker")
-                    .args([
-                        "exec",
-                        container_name,
-                        "kill",
-                        "-2",
-                        &pid_val.to_string(),
-                    ])
+                    .args(["exec", container_name, "kill", "-2", &pid_val.to_string()])
                     .status()
                     .await;
             }
@@ -331,7 +328,8 @@ mod tests {
         );
 
         // Executado com python3 e caminho completo para o ros2
-        let cmd2 = "/usr/bin/python3 /opt/ros/humble/bin/ros2 launch perse_bringup perse.launch.xml";
+        let cmd2 =
+            "/usr/bin/python3 /opt/ros/humble/bin/ros2 launch perse_bringup perse.launch.xml";
         assert_eq!(
             parse_launch_command(cmd2),
             Some(("perse_bringup".to_string(), "perse.launch.xml".to_string()))
@@ -345,7 +343,8 @@ mod tests {
         );
 
         // Com argumentos ROS depois do launchfile (ex: arg:=val)
-        let cmd4 = "ros2 launch perse_bringup calibrate.launch use_sim_time:=true calibrate_gyro:=false";
+        let cmd4 =
+            "ros2 launch perse_bringup calibrate.launch use_sim_time:=true calibrate_gyro:=false";
         assert_eq!(
             parse_launch_command(cmd4),
             Some(("perse_bringup".to_string(), "calibrate.launch".to_string()))
