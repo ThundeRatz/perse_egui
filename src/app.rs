@@ -53,6 +53,49 @@ impl MyApp {
         }
 
         if let Some(storage) = cc.storage {
+            // Se existir uma versão completa serializada de AppConfig, restaura como base
+            if let Some(config_json) = storage.get_string("perse_egui.config") {
+                if let Ok(loaded_cfg) =
+                    serde_json::from_str::<crate::config::AppConfig>(&config_json)
+                {
+                    config = loaded_cfg;
+                }
+            }
+
+            // Campos individuais para compatibilidade e sobreposição
+            if let Some(sp) = storage.get_string("perse_egui.starred_parameters") {
+                if let Ok(params) = serde_json::from_str::<Vec<String>>(&sp) {
+                    config.starred_parameters = params;
+                }
+            }
+            if let Some(sl) = storage.get_string("perse_egui.starred_launchfiles") {
+                if let Ok(launches) = serde_json::from_str::<Vec<String>>(&sl) {
+                    config.starred_launchfiles = launches;
+                }
+            }
+            if let Some(auto_close) = storage.get_string("perse_egui.auto_close_terminal_on_exit") {
+                if let Ok(val) = auto_close.parse::<bool>() {
+                    config.auto_close_terminal_on_exit = val;
+                }
+            }
+            if let Some(color_hier) = storage.get_string("perse_egui.color_parameter_hierarchy") {
+                if let Ok(val) = color_hier.parse::<bool>() {
+                    config.color_parameter_hierarchy = val;
+                }
+            }
+            if let Some(target_mode_json) = storage.get_string("perse_egui.launch_target_mode") {
+                if let Ok(mode) =
+                    serde_json::from_str::<crate::config::LaunchTargetMode>(&target_mode_json)
+                {
+                    config.launch_target_mode = mode;
+                }
+            }
+            if let Some(cn) = storage.get_string("perse_egui.docker_container_name") {
+                config.docker_container_name = cn;
+            }
+            if let Some(ep) = storage.get_string("perse_egui.docker_entrypoint") {
+                config.docker_entrypoint = ep;
+            }
             if let Some(sb) = storage.get_string("perse_egui.show_sidebar") {
                 config.show_sidebar = sb.parse().unwrap_or(true);
             }
@@ -230,7 +273,7 @@ impl MyApp {
 
 impl App for MyApp {
     fn auto_save_interval(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(5)
+        std::time::Duration::from_secs(2)
     }
 
     fn save(&mut self, storage: &mut dyn Storage) {
@@ -247,6 +290,34 @@ impl App for MyApp {
             .unwrap_or_default();
 
         // 1. Salvar no armazenamento padrão do egui (cc.storage)
+        if let Ok(config_json) = serde_json::to_string(&self.config) {
+            storage.set_string("perse_egui.config", config_json);
+        }
+        if let Ok(starred_params_json) = serde_json::to_string(&self.config.starred_parameters) {
+            storage.set_string("perse_egui.starred_parameters", starred_params_json);
+        }
+        if let Ok(starred_launches_json) = serde_json::to_string(&self.config.starred_launchfiles) {
+            storage.set_string("perse_egui.starred_launchfiles", starred_launches_json);
+        }
+        storage.set_string(
+            "perse_egui.auto_close_terminal_on_exit",
+            self.config.auto_close_terminal_on_exit.to_string(),
+        );
+        storage.set_string(
+            "perse_egui.color_parameter_hierarchy",
+            self.config.color_parameter_hierarchy.to_string(),
+        );
+        if let Ok(target_mode_json) = serde_json::to_string(&self.config.launch_target_mode) {
+            storage.set_string("perse_egui.launch_target_mode", target_mode_json);
+        }
+        storage.set_string(
+            "perse_egui.docker_container_name",
+            self.config.docker_container_name.clone(),
+        );
+        storage.set_string(
+            "perse_egui.docker_entrypoint",
+            self.config.docker_entrypoint.clone(),
+        );
         storage.set_string("perse_egui.endpoint", self.config.endpoint.clone());
         storage.set_string(
             "perse_egui.show_sidebar",
@@ -328,6 +399,15 @@ impl App for MyApp {
             self.was_connected = true;
             re_log::info!("Conexão com o Host restabelecida. Re-sincronizando Rerun e painéis...");
             self.rewire.reconnect();
+            // Se o cliente tem uma workspace configurada explicitamente, sincroniza com o host
+            if self.config.workspace_path != "." && !self.config.workspace_path.trim().is_empty() {
+                self.control_client
+                    .send(crate::net::protocol::ControlMessage::new(
+                        crate::net::protocol::Domain::Parameters,
+                        "set_workspace",
+                        serde_json::json!({ "workspace": self.config.workspace_path }),
+                    ));
+            }
             // Requisita dados atualizados do host para popular todos os painéis
             self.control_client
                 .send(crate::net::protocol::ControlMessage::new(
@@ -370,6 +450,14 @@ impl App for MyApp {
                             crate::net::protocol::ParametersTreeResponse,
                         >(msg.payload)
                         {
+                            if let Some(ref ws) = resp.workspace {
+                                if !ws.trim().is_empty()
+                                    && (self.config.workspace_path == "."
+                                        || self.config.workspace_path.trim().is_empty())
+                                {
+                                    self.config.workspace_path = ws.clone();
+                                }
+                            }
                             if self.parameters_panel.refresh_in_progress {
                                 self.parameters_panel.packages = resp.packages;
                                 self.parameters_panel.refresh_in_progress = false;
@@ -385,6 +473,14 @@ impl App for MyApp {
                             crate::net::protocol::LaunchfilesListResponse,
                         >(msg.payload)
                         {
+                            if let Some(ref ws) = resp.workspace {
+                                if !ws.trim().is_empty()
+                                    && (self.config.workspace_path == "."
+                                        || self.config.workspace_path.trim().is_empty())
+                                {
+                                    self.config.workspace_path = ws.clone();
+                                }
+                            }
                             self.launchfiles_panel.update_from_remote(resp.packages);
                         }
                     } else if msg.action == "status" {
@@ -544,7 +640,13 @@ impl App for MyApp {
                                 crate::net::protocol::TerminalStatusMessage,
                             >(msg.payload)
                             {
-                                self.terminals_panel.handle_status(status_msg);
+                                if !status_msg.is_running && self.config.auto_close_terminal_on_exit
+                                {
+                                    self.terminals_panel
+                                        .close_session(&status_msg.id, Some(&self.control_client));
+                                } else {
+                                    self.terminals_panel.handle_status(status_msg);
+                                }
                                 ui.ctx().request_repaint();
                             }
                         }
@@ -723,12 +825,15 @@ impl App for MyApp {
                     .max_size(max_param_h)
                     .frame(egui::Frame::new().fill(panel_bg).inner_margin(0.0))
                     .show(ui, |ui| {
+                        let color_hier = self.config.color_parameter_hierarchy;
+                        let ws_path = self.config.workspace_path.clone();
                         self.parameters_panel.ui(
                             ui,
                             &self.state,
-                            self.config.color_parameter_hierarchy,
+                            color_hier,
                             Some(&self.control_client),
-                            Some(&self.config.workspace_path),
+                            Some(&ws_path),
+                            Some(&mut self.config),
                         );
                         if self.parameters_panel.request_open_settings {
                             self.parameters_panel.request_open_settings = false;
@@ -741,11 +846,39 @@ impl App for MyApp {
                     ui,
                     &mut self.state,
                     Some(&self.control_client),
-                    Some(&self.config),
+                    Some(&mut self.config),
                 );
                 if self.launchfiles_panel.request_open_settings {
                     self.launchfiles_panel.request_open_settings = false;
                     self.settings_panel.open = true;
+                }
+
+                if let Some(req) = self.launchfiles_panel.pending_terminal_launch.take() {
+                    self.config.show_right_sidebar = true;
+                    let target_mode = self.config.launch_target_mode;
+                    let target = match target_mode {
+                        crate::config::LaunchTargetMode::Host => {
+                            crate::net::protocol::TerminalTarget::Host
+                        }
+                        crate::config::LaunchTargetMode::Docker => {
+                            crate::net::protocol::TerminalTarget::Docker
+                        }
+                    };
+                    let cmd = crate::panels::launchfiles::build_launch_command_string(
+                        target_mode,
+                        &self.config.docker_entrypoint,
+                        &req.package,
+                        &req.filename,
+                        &req.formatted_args,
+                    );
+                    let title = format!("{} ({:?})", req.filename, target);
+                    self.terminals_panel.spawn_terminal_with_command(
+                        Some(title),
+                        Some(cmd),
+                        target,
+                        Some(&self.control_client),
+                        Some(&self.config),
+                    );
                 }
             });
         self.config.show_sidebar = show_sidebar;

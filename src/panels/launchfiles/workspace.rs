@@ -573,7 +573,7 @@ import os
 
     #[test]
     fn test_scan_real_perse_workspace_launchfiles() {
-        let ws_path = Path::new("/home/alan/Documents/repos/perse");
+        let ws_path = Path::new("");
         if ws_path.exists() {
             let pkgs = scan_workspace_launchfiles(ws_path);
             assert!(

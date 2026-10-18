@@ -150,6 +150,53 @@ impl LaunchPackage {
 pub mod process_manager;
 pub mod workspace;
 
+/// Pedido pendente para abrir um launchfile como terminal interativo
+#[derive(Debug, Clone)]
+pub struct PendingLaunchTerminal {
+    pub package: String,
+    pub filename: String,
+    pub formatted_args: Vec<String>,
+}
+
+/// Constrói o comando de execução do launchfile com os devidos sources de ROS 2 e workspace
+pub fn build_launch_command_string(
+    mode: crate::config::LaunchTargetMode,
+    entrypoint: &str,
+    package: &str,
+    filename: &str,
+    launch_args: &[String],
+) -> String {
+    let entry_script = if !entrypoint.trim().is_empty() {
+        format!(
+            "if [ -f \"{0}\" ]; then source \"{0}\" 2>/dev/null || \"{0}\"; fi; ",
+            entrypoint.trim()
+        )
+    } else {
+        String::new()
+    };
+
+    let args_suffix = if launch_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", launch_args.join(" "))
+    };
+
+    match mode {
+        crate::config::LaunchTargetMode::Host => {
+            format!(
+                "for s in /opt/ros/*/setup.bash install/setup.bash ~/perse_ws/install/setup.bash; do [ -f \"$s\" ] && source \"$s\" 2>/dev/null; done; {0}exec ros2 launch {1} {2}{3}",
+                entry_script, package, filename, args_suffix
+            )
+        }
+        crate::config::LaunchTargetMode::Docker => {
+            format!(
+                "for s in /perse_entrypoint.sh /opt/ros/*/setup.bash /home/*/*/install/setup.bash ~/perse_ws/install/setup.bash; do [ -f \"$s\" ] && source \"$s\" 2>/dev/null; done; {0}exec ros2 launch {1} {2}{3}",
+                entry_script, package, filename, args_suffix
+            )
+        }
+    }
+}
+
 /// Painel de Launchfiles
 #[cfg(feature = "viewer")]
 #[derive(Debug)]
@@ -159,6 +206,7 @@ pub struct LaunchfilesPanel {
     pub search_query: String,
     pub first_frame: bool,
     pub request_open_settings: bool,
+    pub pending_terminal_launch: Option<PendingLaunchTerminal>,
 }
 
 #[cfg(feature = "viewer")]
@@ -170,6 +218,7 @@ impl Default for LaunchfilesPanel {
             search_query: String::new(),
             first_frame: true,
             request_open_settings: false,
+            pending_terminal_launch: None,
         }
     }
 }
@@ -212,7 +261,7 @@ impl LaunchfilesPanel {
         ui: &mut Ui,
         state: &mut AppState,
         client: Option<&crate::net::client::ControlClient>,
-        config: Option<&crate::config::AppConfig>,
+        mut config: Option<&mut crate::config::AppConfig>,
     ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
@@ -268,7 +317,7 @@ impl LaunchfilesPanel {
 
                         let query = self.search_query.trim().to_lowercase();
 
-                        let visible_packages: Vec<&mut LaunchPackage> = self
+                        let mut visible_packages: Vec<&mut LaunchPackage> = self
                             .packages
                             .iter_mut()
                             .filter(|pkg| pkg.matches_search(&query))
@@ -284,6 +333,21 @@ impl LaunchfilesPanel {
                             return;
                         }
 
+                        // Itens marcados com estrela no topo
+                        if let Some(ref cfg) = config {
+                            visible_packages.sort_by(|a, b| {
+                                let a_has_star = a
+                                    .launch_files
+                                    .iter()
+                                    .any(|f| cfg.is_launch_file_starred(&a.name, &f.name));
+                                let b_has_star = b
+                                    .launch_files
+                                    .iter()
+                                    .any(|f| cfg.is_launch_file_starred(&b.name, &f.name));
+                                b_has_star.cmp(&a_has_star)
+                            });
+                        }
+
                         for pkg in visible_packages {
                             render_launch_package(
                                 ui,
@@ -292,7 +356,8 @@ impl LaunchfilesPanel {
                                 state,
                                 is_first_frame,
                                 client,
-                                config,
+                                config.as_deref_mut(),
+                                &mut self.pending_terminal_launch,
                             );
                         }
                     });
@@ -308,7 +373,8 @@ fn render_launch_package(
     state: &mut AppState,
     is_first_frame: bool,
     client: Option<&crate::net::client::ControlClient>,
-    config: Option<&crate::config::AppConfig>,
+    mut config: Option<&mut crate::config::AppConfig>,
+    pending_launch: &mut Option<PendingLaunchTerminal>,
 ) {
     let running_count = pkg
         .launch_files
@@ -330,6 +396,15 @@ fn render_launch_package(
 
     let pkg_name = pkg.name.clone();
 
+    // Ordena os launch files colocando os marcados com estrela no topo
+    if let Some(ref cfg) = config {
+        pkg.launch_files.sort_by(|a, b| {
+            let a_star = cfg.is_launch_file_starred(&pkg.name, &a.name);
+            let b_star = cfg.is_launch_file_starred(&pkg.name, &b.name);
+            b_star.cmp(&a_star)
+        });
+    }
+
     egui::CollapsingHeader::new(RichText::new(title).strong().size(13.0))
         .id_salt(format!("launch_pkg_collapsing_{}", pkg.name))
         .default_open(true)
@@ -346,8 +421,9 @@ fn render_launch_package(
                         force_show_all,
                         is_first_frame,
                         client,
-                        config,
+                        config.as_deref_mut(),
                         0,
+                        pending_launch,
                     );
                 }
             }
@@ -364,8 +440,9 @@ fn render_launch_file(
     parent_force_all: bool,
     is_first_frame: bool,
     client: Option<&crate::net::client::ControlClient>,
-    config: Option<&crate::config::AppConfig>,
+    mut config: Option<&mut crate::config::AppConfig>,
     nesting_level: usize,
+    pending_launch: &mut Option<PendingLaunchTerminal>,
 ) {
     let is_running = file.status == LaunchStatus::Running;
     let has_children = !file.children.is_empty();
@@ -390,6 +467,36 @@ fn render_launch_file(
         .corner_radius(4.0)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                // Botão de Estrela (Favorito) - Apenas para launchfiles de nível superior
+                if nesting_level == 0 {
+                    let is_starred = config
+                        .as_ref()
+                        .map(|c| c.is_launch_file_starred(pkg_name, &file.name))
+                        .unwrap_or(false);
+                    let star_text = if is_starred { "★" } else { "☆" };
+                    let star_color = if is_starred {
+                        Color32::from_rgb(255, 205, 50)
+                    } else {
+                        Color32::from_gray(120)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(star_text).size(13.0).color(star_color))
+                                .frame(false),
+                        )
+                        .on_hover_text(if is_starred {
+                            "Remover dos favoritos"
+                        } else {
+                            "Fixar no topo (Favorito)"
+                        })
+                        .clicked()
+                    {
+                        if let Some(ref mut cfg) = config {
+                            cfg.toggle_launch_file_starred(pkg_name, &file.name);
+                        }
+                    }
+                }
+
                 // Indicador visual de status
                 if is_running {
                     ui.label(RichText::new("●").color(Color32::from_rgb(50, 220, 100)));
@@ -445,9 +552,9 @@ fn render_launch_file(
                                             package: pkg_name.to_string(),
                                             filename: file.name.clone(),
                                             action: "stop".to_string(),
-                                            target_mode: config.map(|c| c.launch_target_mode),
-                                            container_name: config.map(|c| c.docker_container_name.clone()),
-                                            entrypoint: config.and_then(|c| {
+                                            target_mode: config.as_ref().map(|c| c.launch_target_mode),
+                                            container_name: config.as_ref().map(|c| c.docker_container_name.clone()),
+                                            entrypoint: config.as_ref().and_then(|c| {
                                                 if c.docker_entrypoint.trim().is_empty() {
                                                     None
                                                 } else {
@@ -462,52 +569,30 @@ fn render_launch_file(
                             }
                         }
                     } else {
-                        // Botão de Iniciar (Play) usando ícone do re_ui
-                        if re_icon_button(ui, &re_ui::icons::PLAY, "Iniciar launch file").clicked()
+                        // Botão de Iniciar (Play) usando ícone do re_ui: abre como terminal interativo
+                        if re_icon_button(ui, &re_ui::icons::PLAY, "Iniciar launch file no terminal").clicked()
                         {
                             file.status = LaunchStatus::Running;
                             state.increment_action(format!("Iniciou {}", file.name));
-                            if let Some(c) = client {
-                                let formatted_args: Vec<String> = file
-                                    .args
-                                    .iter()
-                                    .filter(|a| {
-                                        if a.from_file {
-                                            !a.value.trim().is_empty()
-                                        } else {
-                                            !a.name.trim().is_empty()
-                                        }
-                                    })
-                                    .map(|a| format!("{}:={}", a.name.trim(), a.value.trim()))
-                                    .collect();
 
-                                c.send(crate::net::protocol::ControlMessage::new(
-                                    crate::net::protocol::Domain::Launchfiles,
-                                    "start",
-                                    serde_json::to_value(
-                                        crate::net::protocol::LaunchfileActionRequest {
-                                            package: pkg_name.to_string(),
-                                            filename: file.name.clone(),
-                                            action: "start".to_string(),
-                                            target_mode: config.map(|c| c.launch_target_mode),
-                                            container_name: config.map(|c| c.docker_container_name.clone()),
-                                            entrypoint: config.and_then(|c| {
-                                                if c.docker_entrypoint.trim().is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(c.docker_entrypoint.clone())
-                                                }
-                                            }),
-                                            args: if formatted_args.is_empty() {
-                                                None
-                                            } else {
-                                                Some(formatted_args)
-                                            },
-                                        },
-                                    )
-                                    .unwrap_or_default(),
-                                ));
-                            }
+                            let formatted_args: Vec<String> = file
+                                .args
+                                .iter()
+                                .filter(|a| {
+                                    if a.from_file {
+                                        !a.value.trim().is_empty()
+                                    } else {
+                                        !a.name.trim().is_empty()
+                                    }
+                                })
+                                .map(|a| format!("{}:={}", a.name.trim(), a.value.trim()))
+                                .collect();
+
+                            *pending_launch = Some(PendingLaunchTerminal {
+                                package: pkg_name.to_string(),
+                                filename: file.name.clone(),
+                                formatted_args,
+                            });
                         }
                     }
                 });
@@ -685,8 +770,9 @@ fn render_launch_file(
                                 parent_force_all,
                                 is_first_frame,
                                 client,
-                                config,
+                                config.as_deref_mut(),
                                 nesting_level + 1,
+                                pending_launch,
                             );
                         }
                     }

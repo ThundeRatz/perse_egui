@@ -73,7 +73,7 @@ impl HostState {
                 MissionSetCollection::default()
             };
 
-        let default_ws = crate::config::default_workspace_path();
+        let default_ws = resolve_persisted_workspace();
 
         let scanned_pkgs =
             crate::panels::parameters::workspace::scan_workspace_packages(&default_ws);
@@ -115,6 +115,69 @@ impl HostState {
             tx_broadcast,
         }
     }
+}
+
+/// Tenta resolver o caminho da workspace ROS a partir de variáveis de ambiente,
+/// arquivos de persistência anteriores ou subindo a árvore de diretórios.
+fn resolve_persisted_workspace() -> String {
+    if let Ok(ws) = std::env::var("ROS_WORKSPACE") {
+        let trimmed = ws.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Ok(ws) = std::fs::read_to_string("perse_workspace.txt") {
+        let trimmed = ws.trim();
+        if !trimmed.is_empty() && trimmed != "." && std::path::Path::new(trimmed).is_dir() {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Ok(state) = crate::config::PersistentAppState::load_from_file("perse_config.json") {
+        let trimmed = state.config.workspace_path.trim();
+        if !trimmed.is_empty() && trimmed != "." && std::path::Path::new(trimmed).is_dir() {
+            return trimmed.to_string();
+        }
+    }
+
+    // Tenta carregar de app.ron (eframe storage nativo)
+    let mut storage_path = None;
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        let p = std::path::PathBuf::from(xdg).join("perse_egui/app.ron");
+        if p.is_file() {
+            storage_path = Some(p);
+        }
+    }
+    if storage_path.is_none() {
+        if let Some(home) = std::env::var_os("HOME") {
+            let p = std::path::PathBuf::from(home).join(".local/share/perse_egui/app.ron");
+            if p.is_file() {
+                storage_path = Some(p);
+            }
+        }
+    }
+
+    if let Some(path) = storage_path {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("\"perse_egui.workspace_path\":") {
+                    let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
+                    if parts.len() == 2 {
+                        let val = parts[1]
+                            .trim()
+                            .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                        if !val.is_empty() && val != "." && std::path::Path::new(val).is_dir() {
+                            return val.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    crate::config::default_workspace_path()
 }
 
 /// Localiza o diretório dos artefatos WebAssembly
@@ -366,18 +429,24 @@ async fn handle_control_socket(mut socket: WebSocket, host_state: HostState) {
             .map(|g| g.clone())
             .unwrap_or_default();
         let sessions = host_state.pty_manager.list_sessions();
+        let ws = host_state.workspace_path.lock().map(|g| g.clone()).ok();
 
         vec![
             ControlMessage::new(
                 Domain::Parameters,
                 "tree_response",
-                serde_json::to_value(ParametersTreeResponse { packages: pkgs }).unwrap_or_default(),
+                serde_json::to_value(ParametersTreeResponse {
+                    packages: pkgs,
+                    workspace: ws.clone(),
+                })
+                .unwrap_or_default(),
             ),
             ControlMessage::new(
                 Domain::Launchfiles,
                 "list_response",
                 serde_json::to_value(LaunchfilesListResponse {
                     packages: launch_pkgs,
+                    workspace: ws,
                 })
                 .unwrap_or_default(),
             ),
@@ -521,11 +590,13 @@ async fn sync_launch_status(host_state: &HostState) {
                 let _ = host_state.tx_broadcast.send(msg);
             }
 
+            let ws = host_state.workspace_path.lock().map(|g| g.clone()).ok();
             let list_resp = ControlMessage::new(
                 Domain::Launchfiles,
                 "list_response",
                 serde_json::to_value(LaunchfilesListResponse {
                     packages: pkgs.clone(),
+                    workspace: ws,
                 })
                 .unwrap_or_default(),
             );
@@ -538,16 +609,34 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
     match msg.domain {
         Domain::Parameters => match msg.action.as_str() {
             "get_tree" => {
-                let pkgs = host_state
+                let ws_val = host_state
+                    .workspace_path
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| resolve_persisted_workspace());
+                let mut pkgs = host_state
                     .packages
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
+                if pkgs.is_empty() {
+                    let scanned =
+                        crate::panels::parameters::workspace::scan_workspace_packages(&ws_val);
+                    if !scanned.is_empty() {
+                        if let Ok(mut pkgs_lock) = host_state.packages.lock() {
+                            *pkgs_lock = scanned.clone();
+                        }
+                        pkgs = scanned;
+                    }
+                }
                 let resp = ControlMessage::new(
                     Domain::Parameters,
                     "tree_response",
-                    serde_json::to_value(ParametersTreeResponse { packages: pkgs })
-                        .unwrap_or_default(),
+                    serde_json::to_value(ParametersTreeResponse {
+                        packages: pkgs,
+                        workspace: Some(ws_val),
+                    })
+                    .unwrap_or_default(),
                 );
                 let _ = host_state.tx_broadcast.send(resp);
             }
@@ -556,7 +645,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                     .workspace_path
                     .lock()
                     .map(|g| g.clone())
-                    .unwrap_or_else(|_| crate::config::default_workspace_path());
+                    .unwrap_or_else(|_| resolve_persisted_workspace());
                 let scanned =
                     crate::panels::parameters::workspace::scan_workspace_packages(&ws_val);
                 if !scanned.is_empty() {
@@ -571,8 +660,11 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                     let resp = ControlMessage::new(
                         Domain::Parameters,
                         "tree_response",
-                        serde_json::to_value(ParametersTreeResponse { packages: scanned })
-                            .unwrap_or_default(),
+                        serde_json::to_value(ParametersTreeResponse {
+                            packages: scanned,
+                            workspace: Some(ws_val.clone()),
+                        })
+                        .unwrap_or_default(),
                     );
                     let _ = host_state.tx_broadcast.send(resp);
                 } else if let Ok(pkgs) = host_state.packages.lock() {
@@ -581,6 +673,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         "tree_response",
                         serde_json::to_value(ParametersTreeResponse {
                             packages: pkgs.clone(),
+                            workspace: Some(ws_val),
                         })
                         .unwrap_or_default(),
                     );
@@ -633,11 +726,13 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                             for p in pkgs.iter_mut() {
                                 p.apply_all();
                             }
+                            let ws = host_state.workspace_path.lock().map(|g| g.clone()).ok();
                             let resp = ControlMessage::new(
                                 Domain::Parameters,
                                 "tree_response",
                                 serde_json::to_value(ParametersTreeResponse {
                                     packages: pkgs.clone(),
+                                    workspace: ws,
                                 })
                                 .unwrap_or_default(),
                             );
@@ -658,11 +753,13 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         for p in pkgs.iter_mut() {
                             p.apply_all();
                         }
+                        let ws = host_state.workspace_path.lock().map(|g| g.clone()).ok();
                         let resp = ControlMessage::new(
                             Domain::Parameters,
                             "tree_response",
                             serde_json::to_value(ParametersTreeResponse {
                                 packages: pkgs.clone(),
+                                workspace: ws,
                             })
                             .unwrap_or_default(),
                         );
@@ -684,11 +781,13 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                     for p in pkgs.iter_mut() {
                         p.apply_all();
                     }
+                    let ws = host_state.workspace_path.lock().map(|g| g.clone()).ok();
                     let resp = ControlMessage::new(
                         Domain::Parameters,
                         "tree_response",
                         serde_json::to_value(ParametersTreeResponse {
                             packages: pkgs.clone(),
+                            workspace: ws,
                         })
                         .unwrap_or_default(),
                     );
@@ -707,6 +806,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                     if let Ok(mut ws_lock) = host_state.workspace_path.lock() {
                         *ws_lock = ws_val.to_string();
                     }
+                    let _ = std::fs::write("perse_workspace.txt", ws_val);
                     let scanned =
                         crate::panels::parameters::workspace::scan_workspace_packages(ws_val);
                     if !scanned.is_empty() {
@@ -721,8 +821,11 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         let resp = ControlMessage::new(
                             Domain::Parameters,
                             "tree_response",
-                            serde_json::to_value(ParametersTreeResponse { packages: scanned })
-                                .unwrap_or_default(),
+                            serde_json::to_value(ParametersTreeResponse {
+                                packages: scanned,
+                                workspace: Some(ws_val.to_string()),
+                            })
+                            .unwrap_or_default(),
                         );
                         let _ = host_state.tx_broadcast.send(resp);
                     }
@@ -737,6 +840,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         "list_response",
                         serde_json::to_value(LaunchfilesListResponse {
                             packages: scanned_launches,
+                            workspace: Some(ws_val.to_string()),
                         })
                         .unwrap_or_default(),
                     );
@@ -748,16 +852,32 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
         Domain::Launchfiles => match msg.action.as_str() {
             "get_list" => {
                 sync_launch_status(host_state).await;
-                let launch_pkgs = host_state
+                let ws_val = host_state
+                    .workspace_path
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| resolve_persisted_workspace());
+                let mut launch_pkgs = host_state
                     .launch_packages
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
+                if launch_pkgs.is_empty() {
+                    let scanned =
+                        crate::panels::launchfiles::workspace::scan_workspace_launchfiles(&ws_val);
+                    if !scanned.is_empty() {
+                        if let Ok(mut lpkgs_lock) = host_state.launch_packages.lock() {
+                            *lpkgs_lock = scanned.clone();
+                        }
+                        launch_pkgs = scanned;
+                    }
+                }
                 let resp = ControlMessage::new(
                     Domain::Launchfiles,
                     "list_response",
                     serde_json::to_value(LaunchfilesListResponse {
                         packages: launch_pkgs,
+                        workspace: Some(ws_val),
                     })
                     .unwrap_or_default(),
                 );
@@ -1119,6 +1239,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         &container,
                         &entrypoint,
                         &ws_path,
+                        req.command.as_deref(),
                         move |sid, data| {
                             let ts = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)

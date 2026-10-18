@@ -141,7 +141,11 @@ pub fn show_terminal_widget(
     let response = ui.interact(rect, widget_id, egui::Sense::click_and_drag());
 
     // Gerenciamento de foco do terminal:
-    if response.clicked() || response.drag_started() {
+    if session.just_focused {
+        session.just_focused = false;
+        session.is_focused = true;
+        response.request_focus();
+    } else if response.clicked() || response.drag_started() {
         session.is_focused = true;
         response.request_focus();
     } else if ui.input(|i| i.pointer.any_pressed()) && !response.hovered() {

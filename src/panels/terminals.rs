@@ -124,11 +124,44 @@ impl TerminalsPanel {
             if self.active_tab_index >= self.sessions.len() {
                 self.active_tab_index = self.sessions.len().saturating_sub(1);
             }
+            if self.sessions.is_empty() {
+                widget::set_terminal_focus_web(false);
+            }
         }
     }
 
-    fn spawn_new_terminal(
+    /// Encerra e remove a aba de terminal localmente e notifica o daemon / PTY local se necessário.
+    pub fn close_session(&mut self, id: &str, client: Option<&ControlClient>) {
+        if let Some(pos) = self.sessions.iter().position(|s| s.id == id) {
+            let closed_id = self.sessions[pos].id.clone();
+            self.sessions.remove(pos);
+            if self.active_tab_index >= self.sessions.len() {
+                self.active_tab_index = self.sessions.len().saturating_sub(1);
+            }
+            if self.sessions.is_empty() {
+                widget::set_terminal_focus_web(false);
+            }
+            if let Some(c) = client {
+                c.send(ControlMessage::new(
+                    Domain::Terminal,
+                    "close",
+                    serde_json::to_value(TerminalCloseRequest { id: closed_id })
+                        .unwrap_or_default(),
+                ));
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.local_pty_manager.close_session(&closed_id);
+                }
+            }
+        }
+    }
+
+    /// Cria uma nova sessão de terminal com título e comando inicial opcional (ex: launchfile).
+    pub fn spawn_terminal_with_command(
         &mut self,
+        custom_title: Option<String>,
+        command: Option<String>,
         target: TerminalTarget,
         client: Option<&ControlClient>,
         _config: Option<&AppConfig>,
@@ -141,11 +174,13 @@ impl TerminalsPanel {
             TerminalTarget::Docker => "Docker",
         };
         let id = format!("term_{}_{}", idx, current_time_ms() % 100_000);
-        let title = format!("term_{} ({})", idx, target_label);
+        let title = custom_title.unwrap_or_else(|| format!("term_{} ({})", idx, target_label));
         let cols = 80;
         let rows = 24;
 
-        let session = TerminalSession::new(id.clone(), title.clone(), target);
+        let mut session = TerminalSession::new(id.clone(), title.clone(), target);
+        session.is_focused = true;
+        session.just_focused = true;
         self.sessions.push(session);
         self.active_tab_index = self.sessions.len() - 1;
 
@@ -159,6 +194,7 @@ impl TerminalsPanel {
                     target,
                     cols,
                     rows,
+                    command,
                 })
                 .unwrap_or_default(),
             ));
@@ -185,6 +221,7 @@ impl TerminalsPanel {
                     container,
                     entrypoint,
                     ws_path,
+                    command.as_deref(),
                     move |sid, data| {
                         let _ = tx_out.send(LocalPtyEvent::Output(sid, data));
                     },
@@ -200,6 +237,15 @@ impl TerminalsPanel {
                 }
             }
         }
+    }
+
+    fn spawn_new_terminal(
+        &mut self,
+        target: TerminalTarget,
+        client: Option<&ControlClient>,
+        config: Option<&AppConfig>,
+    ) {
+        self.spawn_terminal_with_command(None, None, target, client, config);
     }
 
     pub fn ui(&mut self, ui: &mut Ui, client: Option<&ControlClient>, config: Option<&AppConfig>) {
@@ -228,7 +274,13 @@ impl TerminalsPanel {
                         }
                     }
                     LocalPtyEvent::Exit(id) => {
-                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                        let auto_close = config
+                            .map(|c| c.auto_close_terminal_on_exit)
+                            .unwrap_or(false);
+                        if auto_close {
+                            self.close_session(&id, client);
+                            got_local_output = true;
+                        } else if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
                             s.is_running = false;
                             s.process_bytes(b"\r\n\x1b[33m[Processo finalizado]\x1b[0m\r\n", now);
                             got_local_output = true;
@@ -285,15 +337,28 @@ impl TerminalsPanel {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("Nenhum terminal aberto.").color(Color32::from_gray(150)));
                 ui.add_space(8.0);
+                let id = ui.id().with("terminal_empty_buttons_row");
+                let measured_width: f32 = ui.data(|d| d.get_temp(id)).unwrap_or(320.0);
+                let avail_width = ui.available_width();
+                let left_space = ((avail_width - measured_width) / 2.0).max(0.0);
+
                 ui.horizontal(|ui| {
-                    if ui.button("+ Novo Terminal (Host)").clicked() {
-                        self.selected_target = TerminalTarget::Host;
-                        self.spawn_new_terminal(TerminalTarget::Host, client, config);
+                    if left_space > 0.0 {
+                        ui.add_space(left_space);
                     }
-                    if ui.button("+ Novo Terminal (Docker)").clicked() {
-                        self.selected_target = TerminalTarget::Docker;
-                        self.spawn_new_terminal(TerminalTarget::Docker, client, config);
-                    }
+                    let row_resp = ui
+                        .horizontal(|ui| {
+                            if ui.button("+ Novo Terminal (Host)").clicked() {
+                                self.selected_target = TerminalTarget::Host;
+                                self.spawn_new_terminal(TerminalTarget::Host, client, config);
+                            }
+                            if ui.button("+ Novo Terminal (Docker)").clicked() {
+                                self.selected_target = TerminalTarget::Docker;
+                                self.spawn_new_terminal(TerminalTarget::Docker, client, config);
+                            }
+                        })
+                        .response;
+                    ui.data_mut(|d| d.insert_temp(id, row_resp.rect.width()));
                 });
             });
             return;
@@ -332,31 +397,15 @@ impl TerminalsPanel {
                         self.active_tab_index = activate_idx;
                         for (i, s) in self.sessions.iter_mut().enumerate() {
                             s.is_focused = i == activate_idx;
+                            if i == activate_idx {
+                                s.just_focused = true;
+                            }
                         }
                     }
 
                     if let Some(close_idx) = tab_to_close {
                         let closed_id = self.sessions[close_idx].id.clone();
-                        self.sessions.remove(close_idx);
-                        if self.active_tab_index >= self.sessions.len() {
-                            self.active_tab_index = self.sessions.len().saturating_sub(1);
-                        }
-                        if self.sessions.is_empty() {
-                            widget::set_terminal_focus_web(false);
-                        }
-                        if let Some(c) = client {
-                            c.send(ControlMessage::new(
-                                Domain::Terminal,
-                                "close",
-                                serde_json::to_value(TerminalCloseRequest { id: closed_id })
-                                    .unwrap_or_default(),
-                            ));
-                        } else {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                self.local_pty_manager.close_session(&closed_id);
-                            }
-                        }
+                        self.close_session(&closed_id, client);
                     }
                 });
             });
@@ -490,13 +539,11 @@ fn render_tab_pill(ui: &mut Ui, title: &str, is_running: bool, is_active: bool) 
                 {
                     clicked_tab = true;
                 }
+                let close_img = re_ui::icons::CLOSE_SMALL
+                    .as_image()
+                    .fit_to_exact_size(egui::vec2(10.0, 10.0));
                 if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("✕").size(10.5).color(Color32::from_gray(150)),
-                        )
-                        .frame(false),
-                    )
+                    .add(egui::Button::image(close_img).frame(false))
                     .on_hover_text("Fechar terminal e encerrar processo")
                     .clicked()
                 {
@@ -506,4 +553,36 @@ fn render_tab_pill(ui: &mut Ui, title: &str, is_running: bool, is_active: bool) 
         });
 
     (clicked_tab, clicked_close)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_close_session_and_tab_management() {
+        let mut panel = TerminalsPanel::default();
+        let s1 = TerminalSession::new(
+            "term_1".to_string(),
+            "Term 1".to_string(),
+            TerminalTarget::Host,
+        );
+        let s2 = TerminalSession::new(
+            "term_2".to_string(),
+            "Term 2".to_string(),
+            TerminalTarget::Host,
+        );
+        panel.sessions.push(s1);
+        panel.sessions.push(s2);
+        panel.active_tab_index = 1;
+
+        assert_eq!(panel.sessions.len(), 2);
+        panel.close_session("term_2", None);
+        assert_eq!(panel.sessions.len(), 1);
+        assert_eq!(panel.active_tab_index, 0);
+
+        panel.close_session("term_1", None);
+        assert_eq!(panel.sessions.len(), 0);
+        assert_eq!(panel.active_tab_index, 0);
+    }
 }

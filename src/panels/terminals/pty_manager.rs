@@ -80,6 +80,7 @@ impl PtyManager {
         docker_container: &str,
         docker_entrypoint: &str,
         workspace_path: &str,
+        command: Option<&str>,
         on_output: FOut,
         on_exit: FExit,
     ) -> Result<(), String>
@@ -108,6 +109,10 @@ impl PtyManager {
                 {
                     c.cwd(workspace_path.trim());
                 }
+                if let Some(cmd_str) = command {
+                    c.arg("-c");
+                    c.arg(cmd_str);
+                }
                 c
             }
             TerminalTarget::Docker => {
@@ -123,13 +128,21 @@ impl PtyManager {
                 c.arg("bash");
 
                 let entry = docker_entrypoint.trim();
-                if !entry.is_empty() {
-                    let init_cmd = format!(
-                        "if [ -f \"{0}\" ]; then source \"{0}\" 2>/dev/null; fi; exec bash -i",
+                let init_cmd = if !entry.is_empty() {
+                    format!(
+                        "if [ -f \"{0}\" ]; then source \"{0}\" 2>/dev/null; fi; ",
                         entry
-                    );
+                    )
+                } else {
+                    String::new()
+                };
+
+                if let Some(cmd_str) = command {
                     c.arg("-c");
-                    c.arg(init_cmd);
+                    c.arg(format!("{}{}", init_cmd, cmd_str));
+                } else if !entry.is_empty() {
+                    c.arg("-c");
+                    c.arg(format!("{}exec bash -i", init_cmd));
                 }
                 c
             }

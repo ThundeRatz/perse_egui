@@ -165,28 +165,16 @@ pub async fn start_launch_async(
     filename: &str,
     launch_args: &[String],
 ) -> Result<Option<u32>, String> {
-    let entry_script = if !entrypoint.trim().is_empty() {
-        format!(
-            "if [ -f \"{0}\" ]; then source \"{0}\" 2>/dev/null || \"{0}\"; fi; ",
-            entrypoint.trim()
-        )
-    } else {
-        String::new()
-    };
-
-    let args_suffix = if launch_args.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", launch_args.join(" "))
-    };
+    let cmd_str = crate::panels::launchfiles::build_launch_command_string(
+        mode,
+        entrypoint,
+        package,
+        filename,
+        launch_args,
+    );
 
     match mode {
         LaunchTargetMode::Host => {
-            let cmd_str = format!(
-                "for s in /opt/ros/*/setup.bash install/setup.bash ~/perse_ws/install/setup.bash; do [ -f \"$s\" ] && source \"$s\" 2>/dev/null; done; {0}exec ros2 launch {1} {2}{3}",
-                entry_script, package, filename, args_suffix
-            );
-
             let child = tokio::process::Command::new("bash")
                 .args(["-c", &cmd_str])
                 .spawn()
@@ -195,11 +183,6 @@ pub async fn start_launch_async(
             Ok(child.id())
         }
         LaunchTargetMode::Docker => {
-            let cmd_str = format!(
-                "for s in /perse_entrypoint.sh /opt/ros/*/setup.bash /home/*/*/install/setup.bash ~/perse_ws/install/setup.bash; do [ -f \"$s\" ] && source \"$s\" 2>/dev/null; done; {0}exec ros2 launch {1} {2}{3}",
-                entry_script, package, filename, args_suffix
-            );
-
             let out = tokio::process::Command::new("docker")
                 .args(["exec", "-d", container_name, "bash", "-c", &cmd_str])
                 .output()

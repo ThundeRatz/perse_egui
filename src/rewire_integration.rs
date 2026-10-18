@@ -1,17 +1,25 @@
 use std::error::Error;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
-use eframe::{CreationContext, Frame};
+use eframe::{App as _, CreationContext, Frame};
 use egui::{Context, Ui};
 #[cfg(not(target_arch = "wasm32"))]
 use re_grpc_server::MessageProxyHandle;
-use rewire_viewer::{app::RewireApp, views};
+use rewire_viewer::ui::StatusBar;
+use rewire_viewer::views;
 #[cfg(not(target_arch = "wasm32"))]
 use rewire_viewer::{connection::RelayLink, control};
 
 pub type IntegrationResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub struct RewireIntegration {
-    viewer: RewireApp,
+    rerun_app: re_viewer::App,
+    start_time: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    link: RelayLink,
     #[cfg(target_arch = "wasm32")]
     stream_url: String,
     #[cfg(not(target_arch = "wasm32"))]
@@ -71,10 +79,10 @@ impl RewireIntegration {
                 }
             }
 
-            let viewer = RewireApp::new(rerun_app, link);
-
             Ok(Self {
-                viewer,
+                rerun_app,
+                start_time: Instant::now(),
+                link,
                 _control_handle: control_handle,
             })
         }
@@ -123,9 +131,9 @@ impl RewireIntegration {
             re_log::info!("Carregando blueprint padrão WASM: {}", blueprint_url);
             rerun_app.open_url_or_file(&blueprint_url);
 
-            let viewer = RewireApp::new(rerun_app);
             Ok(Self {
-                viewer,
+                rerun_app,
+                start_time: Instant::now(),
                 stream_url: url,
             })
         }
@@ -136,7 +144,7 @@ impl RewireIntegration {
         {
             if !self.stream_url.is_empty() {
                 re_log::info!("Reconectando ao stream Rerun/Rewire: {}", self.stream_url);
-                self.viewer.open_url_or_file(&self.stream_url);
+                self.rerun_app.open_url_or_file(&self.stream_url);
             }
         }
     }
@@ -147,13 +155,29 @@ impl RewireIntegration {
     }
 
     pub fn logic(&mut self, ctx: &Context, frame: &mut Frame) {
-        eframe::App::logic(&mut self.viewer, ctx, frame);
-        crate::editor::space_view::sync_mission_points_to_rerun(self.viewer.rerun_app());
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        self.rerun_app.logic(ctx, frame);
+        crate::editor::space_view::sync_mission_points_to_rerun(&self.rerun_app);
     }
 
     pub fn show(&mut self, ui: &mut Ui, frame: &mut Frame) {
         if ui.available_width() >= 320.0 && ui.available_height() >= 200.0 {
-            eframe::App::ui(&mut self.viewer, ui, frame);
+            let db = self.rerun_app.recording_db();
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let (state, fleet) = (self.link.state(), self.link.fleet());
+            #[cfg(target_arch = "wasm32")]
+            let (state, fleet) = (rewire_viewer::connection::ConnectionState::Connecting, None);
+
+            let status = StatusBar::new(db, state, fleet, self.start_time.elapsed());
+
+            egui::Panel::bottom("rewire_status_bar")
+                .exact_size(24.0)
+                .show(ui, |ui| {
+                    status.render(ui);
+                });
+
+            self.rerun_app.ui(ui, frame);
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label(
@@ -166,6 +190,6 @@ impl RewireIntegration {
     }
 
     pub fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::App::save(&mut self.viewer, storage);
+        self.rerun_app.save(storage);
     }
 }

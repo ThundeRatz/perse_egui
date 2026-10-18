@@ -67,6 +67,42 @@ pub struct AppConfig {
     pub docker_container_name: String,
     #[serde(default)]
     pub docker_entrypoint: String,
+    #[serde(default = "default_true")]
+    pub auto_close_terminal_on_exit: bool,
+    #[serde(default)]
+    pub starred_parameters: Vec<String>,
+    #[serde(default)]
+    pub starred_launchfiles: Vec<String>,
+}
+
+impl AppConfig {
+    pub fn is_parameter_file_starred(&self, pkg: &str, filename: &str) -> bool {
+        let key = format!("{}/{}", pkg, filename);
+        self.starred_parameters.iter().any(|k| k == &key)
+    }
+
+    pub fn toggle_parameter_file_starred(&mut self, pkg: &str, filename: &str) {
+        let key = format!("{}/{}", pkg, filename);
+        if let Some(pos) = self.starred_parameters.iter().position(|k| k == &key) {
+            self.starred_parameters.remove(pos);
+        } else {
+            self.starred_parameters.push(key);
+        }
+    }
+
+    pub fn is_launch_file_starred(&self, pkg: &str, filename: &str) -> bool {
+        let key = format!("{}/{}", pkg, filename);
+        self.starred_launchfiles.iter().any(|k| k == &key)
+    }
+
+    pub fn toggle_launch_file_starred(&mut self, pkg: &str, filename: &str) {
+        let key = format!("{}/{}", pkg, filename);
+        if let Some(pos) = self.starred_launchfiles.iter().position(|k| k == &key) {
+            self.starred_launchfiles.remove(pos);
+        } else {
+            self.starred_launchfiles.push(key);
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -86,6 +122,9 @@ impl Default for AppConfig {
             launch_target_mode: LaunchTargetMode::Docker,
             docker_container_name: default_docker_container_name(),
             docker_entrypoint: String::new(),
+            auto_close_terminal_on_exit: true,
+            starred_parameters: Vec::new(),
+            starred_launchfiles: Vec::new(),
         }
     }
 }
@@ -133,6 +172,9 @@ mod tests {
         assert_eq!(config.launch_target_mode, LaunchTargetMode::Docker);
         assert_eq!(config.docker_container_name, "perse_container");
         assert_eq!(config.docker_entrypoint, "");
+        assert!(config.auto_close_terminal_on_exit);
+        assert!(config.starred_parameters.is_empty());
+        assert!(config.starred_launchfiles.is_empty());
     }
 
     #[test]
@@ -150,6 +192,15 @@ mod tests {
             .visible_param_keys
             .insert("my_param".to_string());
         state.config.color_parameter_hierarchy = true;
+
+        state
+            .config
+            .starred_parameters
+            .push("pkg_a/param.yaml".to_string());
+        state
+            .config
+            .starred_launchfiles
+            .push("pkg_b/launch.xml".to_string());
 
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("perse_test_persistent_config.json");
@@ -174,7 +225,31 @@ mod tests {
             .visible_param_keys
             .contains("my_param"));
         assert!(loaded.config.color_parameter_hierarchy);
+        assert_eq!(
+            loaded.config.starred_parameters,
+            vec!["pkg_a/param.yaml".to_string()]
+        );
+        assert_eq!(
+            loaded.config.starred_launchfiles,
+            vec!["pkg_b/launch.xml".to_string()]
+        );
 
         let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_toggle_starred() {
+        let mut config = AppConfig::default();
+        assert!(!config.is_parameter_file_starred("pkg", "file.yaml"));
+        config.toggle_parameter_file_starred("pkg", "file.yaml");
+        assert!(config.is_parameter_file_starred("pkg", "file.yaml"));
+        config.toggle_parameter_file_starred("pkg", "file.yaml");
+        assert!(!config.is_parameter_file_starred("pkg", "file.yaml"));
+
+        assert!(!config.is_launch_file_starred("pkg", "launch.py"));
+        config.toggle_launch_file_starred("pkg", "launch.py");
+        assert!(config.is_launch_file_starred("pkg", "launch.py"));
+        config.toggle_launch_file_starred("pkg", "launch.py");
+        assert!(!config.is_launch_file_starred("pkg", "launch.py"));
     }
 }

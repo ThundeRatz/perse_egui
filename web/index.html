@@ -71,7 +71,36 @@
   <canvas id="the_canvas_id" class="hidden"></canvas>
   <div id="error" class="hidden"></div>
   <script>
-    window.__perse_terminal_focused = false;
+    let _perseTerminalFocused = false;
+    Object.defineProperty(window, "__perse_terminal_focused", {
+      get() {
+        return _perseTerminalFocused;
+      },
+      set(val) {
+        _perseTerminalFocused = Boolean(val);
+        // Tenta acionar a Keyboard Lock API (Chromium / Edge) para teclas de sistema como Ctrl+W e Ctrl+R
+        if (_perseTerminalFocused) {
+          if (navigator.keyboard && typeof navigator.keyboard.lock === "function") {
+            navigator.keyboard.lock(["KeyW", "KeyR"]).catch(() => {});
+          }
+        } else {
+          if (navigator.keyboard && typeof navigator.keyboard.unlock === "function") {
+            navigator.keyboard.unlock();
+          }
+        }
+      },
+      configurable: true,
+      enumerable: true,
+    });
+
+    // Rede de segurança: impede fechamento acidental de aba se o navegador tentar fechar via Ctrl+W
+    window.addEventListener("beforeunload", (e) => {
+      if (window.__perse_terminal_focused) {
+        e.preventDefault();
+        e.returnValue = "";
+        return "";
+      }
+    });
 
     // Quando o terminal estiver em foco, engole atalhos do navegador para que não recarreguem a página
     // nem fechem a aba ou executem ações padrão (Ctrl+R, Cmd+R, F5, Ctrl+W, Ctrl+F, Ctrl+S, Tab, etc.)
@@ -101,6 +130,10 @@
         // Engole atalhos de controle (Ctrl+R, Ctrl+W, Ctrl+F, Ctrl+S, etc.), navegação por Alt (Alt+Left/Right),
         // F5, Tab e scroll no canvas, impedindo as ações nativas do navegador
         e.preventDefault();
+        if ((e.ctrlKey || e.metaKey) && (e.key === "w" || e.key === "W" || e.code === "KeyW")) {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
       }
     }, { capture: true });
 

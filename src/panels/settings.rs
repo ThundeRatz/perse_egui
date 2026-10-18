@@ -49,13 +49,9 @@ impl SettingsPanel {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.label("Endpoint do Relay:");
-                ui.text_edit_singleline(&mut config.endpoint);
-
-                ui.add_space(8.0);
                 ui.label("Sensibilidade do Zoom (Editor 2D):");
                 ui.add(
-                    egui::Slider::new(&mut config.zoom_speed, 0.005..=0.1)
+                    egui::Slider::new(&mut config.zoom_speed, 0.001..=0.05)
                         .text("Velocidade do Scroll"),
                 );
 
@@ -137,6 +133,22 @@ impl SettingsPanel {
                             .hint_text("ex: /opt/ros/humble/setup.bash"),
                     );
                 }
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Terminais:").strong());
+                ui.checkbox(
+                    &mut config.auto_close_terminal_on_exit,
+                    "Fechar aba automaticamente quando o processo terminar",
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "Se desmarcado, a aba é mantida aberta com o histórico de saída e sinaliza '[Processo finalizado]'",
+                    )
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+                );
 
                 ui.add_space(8.0);
                 ui.separator();

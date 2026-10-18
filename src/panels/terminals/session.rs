@@ -60,6 +60,8 @@ pub struct TerminalSession {
     pub chunks_history: Vec<(u64, Vec<u8>)>,
     /// Whether this terminal tab is currently focused by the user.
     pub is_focused: bool,
+    /// Whether the terminal just requested focus programmatically (e.g. on tab switch or creation).
+    pub just_focused: bool,
     /// Active text selection range within the visible screen.
     pub selection: Option<TerminalSelection>,
 }
@@ -85,6 +87,7 @@ impl TerminalSession {
             rows,
             chunks_history: Vec::new(),
             is_focused: false,
+            just_focused: false,
             selection: None,
         }
     }

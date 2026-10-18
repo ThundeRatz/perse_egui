@@ -30,24 +30,56 @@ pub fn find_workspace_root<P: AsRef<Path>>(start_dir: P) -> Option<PathBuf> {
         .ok()
         .unwrap_or_else(|| start_dir.as_ref().to_path_buf());
     loop {
-        // Se a pasta atual tem 'src' e 'build'/'install', ou contém pacotes diretamente
-        if current.join("src").is_dir()
-            || (current.join("install").is_dir() && current.join("build").is_dir())
-        {
-            return Some(current);
-        }
-        if let Ok(entries) = std::fs::read_dir(&current) {
-            let mut count = 0;
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() && p.join("package.xml").is_file() {
-                    count += 1;
-                }
-            }
-            if count > 0 {
+        // Se a pasta atual é diretamente um pacote ROS (contém package.xml no topo),
+        // ela é um pacote individual e não a raiz de uma workspace multi-pacotes.
+        let is_single_package = current.join("package.xml").is_file();
+
+        if !is_single_package {
+            // Se tem build e install (típico de colcon/catkin)
+            if current.join("install").is_dir() && current.join("build").is_dir() {
                 return Some(current);
             }
+
+            // Se tem 'src' e dentro de 'src' há pacotes com package.xml
+            if current.join("src").is_dir() {
+                if let Ok(entries) = std::fs::read_dir(current.join("src")) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_dir()
+                            && (p.join("package.xml").is_file()
+                                || p.read_dir()
+                                    .map(|mut r| {
+                                        r.any(|e| {
+                                            e.map(|sub| sub.path().join("package.xml").is_file())
+                                                .unwrap_or(false)
+                                        })
+                                    })
+                                    .unwrap_or(false))
+                        {
+                            return Some(current);
+                        }
+                    }
+                }
+            }
+
+            // Se contém subpastas com pacotes diretamente
+            if let Ok(entries) = std::fs::read_dir(&current) {
+                let mut count = 0;
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir()
+                        && !should_ignore_dir(&entry.file_name().to_string_lossy())
+                        && p.join("package.xml").is_file()
+                    {
+                        count += 1;
+                    }
+                }
+                if count > 0 {
+                    return Some(current);
+                }
+            }
         }
+
         if !current.pop() {
             break;
         }
@@ -675,7 +707,7 @@ motors_node:
 
     #[test]
     fn test_scan_real_perse_workspace() {
-        let ws = "/home/alan/Documents/repos/perse";
+        let ws = "";
         if std::path::Path::new(ws).exists() {
             let packages = scan_workspace_packages(ws);
             assert!(

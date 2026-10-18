@@ -45,6 +45,8 @@ pub enum Domain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParametersTreeResponse {
     pub packages: Vec<PackageParams>,
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +86,8 @@ pub struct LaunchfileInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchfilesListResponse {
     pub packages: Vec<LaunchPackage>,
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +155,8 @@ pub struct TerminalCreateRequest {
     pub cols: u16,
     #[serde(default = "default_term_rows")]
     pub rows: u16,
+    #[serde(default)]
+    pub command: Option<String>,
 }
 
 /// Envio de bytes de entrada (stdin / teclas ANSI) do cliente para o PTY do daemon
@@ -335,6 +341,7 @@ mod tests {
             target: TerminalTarget::Docker,
             cols: 120,
             rows: 36,
+            command: Some("ros2 launch my_pkg test.launch.py".to_string()),
         };
         let msg = ControlMessage::new(
             Domain::Terminal,

@@ -350,6 +350,7 @@ impl ParametersPanel {
         color_hierarchy: bool,
         client: Option<&crate::net::client::ControlClient>,
         _workspace_path: Option<&str>,
+        mut config: Option<&mut crate::config::AppConfig>,
     ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
@@ -532,7 +533,7 @@ impl ParametersPanel {
 
                         let query = self.search_query.trim().to_lowercase();
 
-                        let visible_packages: Vec<&mut PackageParams> = self
+                        let mut visible_packages: Vec<&mut PackageParams> = self
                             .packages
                             .iter_mut()
                             .filter(|pkg| pkg.matches_search(&query))
@@ -548,8 +549,30 @@ impl ParametersPanel {
                             return;
                         }
 
+                        // Pacotes com arquivos marcados com estrela no topo
+                        if let Some(ref cfg) = config {
+                            visible_packages.sort_by(|a, b| {
+                                let a_has_star = a
+                                    .files
+                                    .iter()
+                                    .any(|f| cfg.is_parameter_file_starred(&a.name, &f.filename));
+                                let b_has_star = b
+                                    .files
+                                    .iter()
+                                    .any(|f| cfg.is_parameter_file_starred(&b.name, &f.filename));
+                                b_has_star.cmp(&a_has_star)
+                            });
+                        }
+
                         for pkg in visible_packages {
-                            render_package(ui, pkg, &query, is_first_frame, color_hierarchy);
+                            render_package(
+                                ui,
+                                pkg,
+                                &query,
+                                is_first_frame,
+                                color_hierarchy,
+                                config.as_deref_mut(),
+                            );
                         }
                     });
             });
@@ -585,6 +608,7 @@ fn render_package(
     query: &str,
     is_first_frame: bool,
     color_hierarchy: bool,
+    mut config: Option<&mut crate::config::AppConfig>,
 ) {
     let mod_count = pkg.count_modified();
     let title = if mod_count > 0 {
@@ -608,6 +632,15 @@ fn render_package(
         RichText::new(title).strong().size(13.0)
     };
 
+    // Ordena arquivos colocando os marcados com estrela no topo
+    if let Some(ref cfg) = config {
+        pkg.files.sort_by(|a, b| {
+            let a_star = cfg.is_parameter_file_starred(&pkg.name, &a.filename);
+            let b_star = cfg.is_parameter_file_starred(&pkg.name, &b.filename);
+            b_star.cmp(&a_star)
+        });
+    }
+
     egui::CollapsingHeader::new(header_text)
         .id_salt(format!("pkg_collapsing_{}", pkg.name))
         .default_open(true)
@@ -624,6 +657,7 @@ fn render_package(
                         force_show_all,
                         is_first_frame,
                         color_hierarchy,
+                        config.as_deref_mut(),
                     );
                 }
             }
@@ -640,6 +674,7 @@ fn render_param_file(
     parent_force_all: bool,
     is_first_frame: bool,
     color_hierarchy: bool,
+    mut config: Option<&mut crate::config::AppConfig>,
 ) {
     let mod_count = file.count_modified();
     let title = if mod_count > 0 {
@@ -671,11 +706,46 @@ fn render_param_file(
         format!("Arquivo: {}", file.filename)
     };
 
-    let header_res = egui::CollapsingHeader::new(header_text)
-        .id_salt(format!("file_collapsing_{}", path_prefix))
-        .default_open(true)
-        .open(open_override)
-        .show(ui, |ui| {
+    let is_starred = config
+        .as_ref()
+        .map(|c| c.is_parameter_file_starred(pkg_name, &file.filename))
+        .unwrap_or(false);
+
+    let id = ui.make_persistent_id(format!("file_collapsing_{}", path_prefix));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    if let Some(open) = open_override {
+        state.set_open(open);
+    }
+
+    state
+        .show_header(ui, |ui| {
+            let star_text = if is_starred { "★" } else { "☆" };
+            let star_color = if is_starred {
+                Color32::from_rgb(255, 205, 50)
+            } else {
+                Color32::from_gray(120)
+            };
+            if ui
+                .add(
+                    egui::Button::new(RichText::new(star_text).size(13.0).color(star_color))
+                        .frame(false),
+                )
+                .on_hover_text(if is_starred {
+                    "Remover dos favoritos"
+                } else {
+                    "Fixar no topo (Favorito)"
+                })
+                .clicked()
+            {
+                if let Some(ref mut cfg) = config {
+                    cfg.toggle_parameter_file_starred(pkg_name, &file.filename);
+                }
+            }
+
+            ui.label(header_text).on_hover_text(tooltip);
+        })
+        .body(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             for scope in &mut file.scopes {
                 if force_show_all || scope.matches_search(query) {
@@ -692,7 +762,6 @@ fn render_param_file(
                 }
             }
         });
-    header_res.header_response.on_hover_text(tooltip);
 }
 
 /// Renderiza escopos de forma recursiva com suporte a simplificação de caminhos de filho único (ex: nav/params/planner)
