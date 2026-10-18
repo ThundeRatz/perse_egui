@@ -168,7 +168,9 @@ impl MyApp {
         mission_editor.canvas_state.view_options = config.canvas_display_options.clone();
         mission_editor.file_path = config.mission_file_path.clone();
 
+        #[allow(unused_mut)]
         let mut parameters_panel = ParametersPanel::default();
+        #[allow(unused_mut)]
         let mut launchfiles_panel = LaunchfilesPanel::default();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -380,26 +382,18 @@ impl App for MyApp {
                             crate::net::protocol::LaunchfilesListResponse,
                         >(msg.payload)
                         {
-                            self.launchfiles_panel.packages = resp.packages;
+                            self.launchfiles_panel.update_from_remote(resp.packages);
                         }
                     } else if msg.action == "status" {
                         if let Ok(notif) = serde_json::from_value::<
                             crate::net::protocol::LaunchfileStatusNotification,
                         >(msg.payload)
                         {
-                            for pkg in &mut self.launchfiles_panel.packages {
-                                if pkg.name == notif.package {
-                                    for f in &mut pkg.launch_files {
-                                        if f.name == notif.filename {
-                                            f.status = if notif.running {
-                                                crate::panels::launchfiles::LaunchStatus::Running
-                                            } else {
-                                                crate::panels::launchfiles::LaunchStatus::Stopped
-                                            };
-                                        }
-                                    }
-                                }
-                            }
+                            self.launchfiles_panel.update_file_status(
+                                &notif.package,
+                                &notif.filename,
+                                notif.running,
+                            );
                         }
                     }
                 }
@@ -679,12 +673,13 @@ impl App for MyApp {
         let left_max = (window_w - 60.0).clamp(40.0, 500.0);
 
         // Sidebar Esquerda (Parâmetros + Launchfiles) usando show_collapsible e size_range
+        let mut show_sidebar = self.config.show_sidebar;
         egui::Panel::left("perse_left_sidebar")
             .resizable(true)
             .default_size(280.0)
             .size_range(40.0..=left_max)
             .frame(egui::Frame::new().fill(panel_bg).inner_margin(0.0))
-            .show_collapsible(ui, &mut self.config.show_sidebar, |ui| {
+            .show_collapsible(ui, &mut show_sidebar, |ui| {
                 // Subpainel superior: Parâmetros (max_height garante que o cabeçalho do Launchfiles nunca fique oculto)
                 let max_param_h = (ui.available_height() - 32.0).max(40.0);
                 egui::Panel::top("sidebar_parameters_subpanel")
@@ -707,13 +702,18 @@ impl App for MyApp {
                     });
 
                 // Subpainel inferior: Launchfiles
-                self.launchfiles_panel
-                    .ui(ui, &mut self.state, Some(&self.control_client));
+                self.launchfiles_panel.ui(
+                    ui,
+                    &mut self.state,
+                    Some(&self.control_client),
+                    Some(&self.config),
+                );
                 if self.launchfiles_panel.request_open_settings {
                     self.launchfiles_panel.request_open_settings = false;
                     self.settings_panel.open = true;
                 }
             });
+        self.config.show_sidebar = show_sidebar;
 
         let right_max = (ui.available_width() - 40.0).clamp(40.0, 600.0);
 

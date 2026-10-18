@@ -91,6 +91,56 @@ impl SettingsPanel {
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(8.0);
+                ui.label(egui::RichText::new("Execução de Launchfiles:").strong());
+                ui.horizontal(|ui| {
+                    ui.radio_value(
+                        &mut config.launch_target_mode,
+                        crate::config::LaunchTargetMode::Docker,
+                        "Container Docker",
+                    );
+                    ui.radio_value(
+                        &mut config.launch_target_mode,
+                        crate::config::LaunchTargetMode::Host,
+                        "Host Nativo",
+                    );
+                });
+
+                if config.launch_target_mode == crate::config::LaunchTargetMode::Docker {
+                    ui.add_space(4.0);
+                    ui.label("Nome do Container Docker:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut config.docker_container_name)
+                            .hint_text("ex: perse_container"),
+                    );
+                    ui.label(
+                        egui::RichText::new("Container pré-existente onde os comandos 'ros2 launch' serão executados")
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
+
+                    ui.add_space(4.0);
+                    ui.label("Entrypoint / Setup do Container (opcional):");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut config.docker_entrypoint)
+                            .hint_text("ex: /perse_entrypoint.sh ou setup.bash"),
+                    );
+                    ui.label(
+                        egui::RichText::new("Script de ambiente a ser carregado antes do 'ros2 launch'")
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
+                } else {
+                    ui.add_space(4.0);
+                    ui.label("Script de Inicialização / Setup do Host (opcional):");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut config.docker_entrypoint)
+                            .hint_text("ex: /opt/ros/humble/setup.bash"),
+                    );
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
                 ui.label("Caminho do Arquivo de Persistência / Configuração:");
                 ui.horizontal(|ui| {
                     let mut path_str = config.custom_config_path.clone().unwrap_or_default();

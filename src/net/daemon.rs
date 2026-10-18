@@ -48,6 +48,9 @@ pub struct HostState {
     pub packages: Arc<Mutex<Vec<PackageParams>>>,
     pub workspace_path: Arc<Mutex<String>>,
     pub launch_packages: Arc<Mutex<Vec<LaunchPackage>>>,
+    pub launch_target_mode: Arc<Mutex<crate::config::LaunchTargetMode>>,
+    pub docker_container_name: Arc<Mutex<String>>,
+    pub docker_entrypoint: Arc<Mutex<String>>,
     pub mission_collection: Arc<Mutex<MissionSetCollection>>,
     pub terminal_tabs: Arc<Mutex<Vec<TerminalTab>>>,
     pub tx_broadcast: broadcast::Sender<ControlMessage>,
@@ -98,10 +101,15 @@ impl HostState {
             Vec::new()
         };
 
+        let default_cfg = crate::config::AppConfig::default();
+
         Self {
             packages: Arc::new(Mutex::new(initial_packages)),
             workspace_path: Arc::new(Mutex::new(default_ws)),
             launch_packages: Arc::new(Mutex::new(initial_launches)),
+            launch_target_mode: Arc::new(Mutex::new(default_cfg.launch_target_mode)),
+            docker_container_name: Arc::new(Mutex::new(default_cfg.docker_container_name)),
+            docker_entrypoint: Arc::new(Mutex::new(default_cfg.docker_entrypoint)),
             mission_collection: Arc::new(Mutex::new(initial_missions)),
             terminal_tabs: Arc::new(Mutex::new(crate::panels::terminals::create_mock_terminals())),
             tx_broadcast,
@@ -187,6 +195,19 @@ pub async fn run_daemon_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (tx_broadcast, _) = broadcast::channel::<ControlMessage>(256);
     let host_state = HostState::new(tx_broadcast);
+
+    // Sincronização inicial de status de launchfiles
+    sync_launch_status(&host_state).await;
+
+    // Background polling: monitora e sincroniza processos de launchfiles a cada 1.5s
+    let poll_state = host_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1500));
+        loop {
+            interval.tick().await;
+            sync_launch_status(&poll_state).await;
+        }
+    });
 
     let web_dir = resolve_web_directory(custom_web_dir.as_deref());
     re_log::info!("Servindo interface web a partir de: {:?}", web_dir);
@@ -414,6 +435,111 @@ async fn handle_control_socket(mut socket: WebSocket, host_state: HostState) {
     }
 }
 
+async fn sync_launch_status(host_state: &HostState) {
+    let mode = host_state
+        .launch_target_mode
+        .lock()
+        .map(|m| *m)
+        .unwrap_or_default();
+    let container = host_state
+        .docker_container_name
+        .lock()
+        .map(|c| c.clone())
+        .unwrap_or_default();
+
+    let running = crate::panels::launchfiles::process_manager::scan_running_launches_async(
+        mode,
+        &container,
+    )
+    .await;
+
+    let mut changed = false;
+    let mut changed_notifications = Vec::new();
+
+    if let Ok(mut pkgs) = host_state.launch_packages.lock() {
+        for pkg in pkgs.iter_mut() {
+            fn check_file(
+                pkg_name: &str,
+                file: &mut crate::panels::launchfiles::LaunchFile,
+                running_list: &[crate::panels::launchfiles::process_manager::RunningLaunch],
+                changed: &mut bool,
+                notifs: &mut Vec<LaunchfileStatusNotification>,
+            ) {
+                let is_running = running_list.iter().any(|rl| {
+                    rl.package == pkg_name
+                        && (rl.filename == file.name
+                            || rl.filename.trim_end_matches(".xml")
+                                == file.name.trim_end_matches(".xml"))
+                });
+                let target_status = if is_running {
+                    LaunchStatus::Running
+                } else {
+                    LaunchStatus::Stopped
+                };
+
+                if file.status != target_status {
+                    file.status = target_status;
+                    *changed = true;
+                    let pid = if is_running {
+                        running_list
+                            .iter()
+                            .find(|rl| {
+                                rl.package == pkg_name
+                                    && (rl.filename == file.name
+                                        || rl.filename.trim_end_matches(".xml")
+                                            == file.name.trim_end_matches(".xml"))
+                            })
+                            .map(|rl| rl.pid)
+                    } else {
+                        None
+                    };
+                    notifs.push(LaunchfileStatusNotification {
+                        package: pkg_name.to_string(),
+                        filename: file.name.clone(),
+                        running: is_running,
+                        pid,
+                    });
+                }
+
+                for child in &mut file.children {
+                    check_file(pkg_name, child, running_list, changed, notifs);
+                }
+            }
+
+            for file in &mut pkg.launch_files {
+                check_file(
+                    &pkg.name,
+                    file,
+                    &running,
+                    &mut changed,
+                    &mut changed_notifications,
+                );
+            }
+        }
+
+        if changed {
+            for notif in changed_notifications {
+                let msg = ControlMessage::new(
+                    Domain::Launchfiles,
+                    "status",
+                    serde_json::to_value(notif).unwrap_or_default(),
+                );
+                let _ = host_state.tx_broadcast.send(msg);
+            }
+
+            let list_resp = ControlMessage::new(
+                Domain::Launchfiles,
+                "list_response",
+                serde_json::to_value(LaunchfilesListResponse {
+                    packages: pkgs.clone(),
+                })
+                .unwrap_or_default(),
+            );
+            let _ = host_state.tx_broadcast.send(list_resp);
+        }
+    }
+}
+
 async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
     match msg.domain {
         Domain::Parameters => match msg.action.as_str() {
@@ -616,6 +742,7 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
         },
         Domain::Launchfiles => match msg.action.as_str() {
             "get_list" => {
+                sync_launch_status(host_state).await;
                 let launch_pkgs = host_state
                     .launch_packages
                     .lock()
@@ -631,63 +758,104 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                 );
                 let _ = host_state.tx_broadcast.send(resp);
             }
+            "set_config" => {
+                if let Ok(req) =
+                    serde_json::from_value::<SetLaunchConfigRequest>(msg.payload.clone())
+                {
+                    if let Ok(mut mode_lock) = host_state.launch_target_mode.lock() {
+                        *mode_lock = req.target_mode;
+                    }
+                    if let Ok(mut container_lock) = host_state.docker_container_name.lock() {
+                        *container_lock = req.container_name;
+                    }
+                    if let Ok(mut entry_lock) = host_state.docker_entrypoint.lock() {
+                        *entry_lock = req.entrypoint;
+                    }
+                    sync_launch_status(host_state).await;
+                }
+            }
             "start" | "stop" => {
                 if let Ok(req) =
                     serde_json::from_value::<LaunchfileActionRequest>(msg.payload.clone())
                 {
-                    let is_start = msg.action == "start" || req.action == "start";
-                    let mut found = false;
-                    let pid = if is_start {
-                        let millis = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis();
-                        Some(1001 + (millis % 8000) as u32)
-                    } else {
-                        None
-                    };
-
-                    if let Ok(mut pkgs) = host_state.launch_packages.lock() {
-                        for pkg in pkgs.iter_mut() {
-                            if pkg.name == req.package {
-                                for f in &mut pkg.launch_files {
-                                    if f.name == req.filename {
-                                        f.status = if is_start {
-                                            LaunchStatus::Running
-                                        } else {
-                                            LaunchStatus::Stopped
-                                        };
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if found {
-                            let notif = ControlMessage::new(
-                                Domain::Launchfiles,
-                                "status",
-                                serde_json::to_value(LaunchfileStatusNotification {
-                                    package: req.package,
-                                    filename: req.filename,
-                                    running: is_start,
-                                    pid,
-                                })
-                                .unwrap_or_default(),
-                            );
-                            let _ = host_state.tx_broadcast.send(notif);
-
-                            let list_resp = ControlMessage::new(
-                                Domain::Launchfiles,
-                                "list_response",
-                                serde_json::to_value(LaunchfilesListResponse {
-                                    packages: pkgs.clone(),
-                                })
-                                .unwrap_or_default(),
-                            );
-                            let _ = host_state.tx_broadcast.send(list_resp);
+                    if let Some(target_mode) = req.target_mode {
+                        if let Ok(mut mode_lock) = host_state.launch_target_mode.lock() {
+                            *mode_lock = target_mode;
                         }
                     }
+                    if let Some(container) = req.container_name {
+                        if let Ok(mut c_lock) = host_state.docker_container_name.lock() {
+                            *c_lock = container;
+                        }
+                    }
+                    if let Some(entrypoint) = req.entrypoint {
+                        if let Ok(mut e_lock) = host_state.docker_entrypoint.lock() {
+                            *e_lock = entrypoint;
+                        }
+                    }
+
+                    let mode = host_state
+                        .launch_target_mode
+                        .lock()
+                        .map(|m| *m)
+                        .unwrap_or_default();
+                    let container = host_state
+                        .docker_container_name
+                        .lock()
+                        .map(|c| c.clone())
+                        .unwrap_or_default();
+                    let entrypoint = host_state
+                        .docker_entrypoint
+                        .lock()
+                        .map(|e| e.clone())
+                        .unwrap_or_default();
+
+                    let is_start = msg.action == "start" || req.action == "start";
+
+                    if is_start {
+                        let launch_args = req.args.as_deref().unwrap_or(&[]);
+                        re_log::info!(
+                            "Daemon: Iniciando launchfile '{}/{}' (modo: {:?}, container: '{}', args: {:?})",
+                            req.package,
+                            req.filename,
+                            mode,
+                            container,
+                            launch_args
+                        );
+                        if let Err(e) = crate::panels::launchfiles::process_manager::start_launch_async(
+                            mode,
+                            &container,
+                            &entrypoint,
+                            &req.package,
+                            &req.filename,
+                            launch_args,
+                        )
+                        .await
+                        {
+                            re_log::error!("Daemon: Erro ao iniciar launchfile: {}", e);
+                        }
+                    } else {
+                        re_log::info!(
+                            "Daemon: Parando launchfile '{}/{}' (modo: {:?}, container: '{}')",
+                            req.package,
+                            req.filename,
+                            mode,
+                            container
+                        );
+                        if let Err(e) = crate::panels::launchfiles::process_manager::stop_launch_async(
+                            mode,
+                            &container,
+                            &req.package,
+                            &req.filename,
+                        )
+                        .await
+                        {
+                            re_log::error!("Daemon: Erro ao parar launchfile: {}", e);
+                        }
+                    }
+
+                    // Sincroniza o status dos processos atualizados e notifica os clientes
+                    sync_launch_status(host_state).await;
                 }
             }
             _ => {}

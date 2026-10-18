@@ -27,6 +27,22 @@ pub fn default_workspace_path() -> String {
     ".".to_string()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LaunchTargetMode {
+    Host,
+    Docker,
+}
+
+impl Default for LaunchTargetMode {
+    fn default() -> Self {
+        Self::Docker
+    }
+}
+
+fn default_docker_container_name() -> String {
+    "perse_container".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     pub endpoint: String,
@@ -45,6 +61,12 @@ pub struct AppConfig {
     pub color_parameter_hierarchy: bool,
     #[serde(default = "default_workspace_path")]
     pub workspace_path: String,
+    #[serde(default)]
+    pub launch_target_mode: LaunchTargetMode,
+    #[serde(default = "default_docker_container_name")]
+    pub docker_container_name: String,
+    #[serde(default)]
+    pub docker_entrypoint: String,
 }
 
 impl Default for AppConfig {
@@ -61,6 +83,9 @@ impl Default for AppConfig {
             is_display_options_open: true,
             color_parameter_hierarchy: true,
             workspace_path: default_workspace_path(),
+            launch_target_mode: LaunchTargetMode::Docker,
+            docker_container_name: default_docker_container_name(),
+            docker_entrypoint: String::new(),
         }
     }
 }
@@ -105,6 +130,9 @@ mod tests {
         assert_eq!(config.custom_config_path, None);
         assert_eq!(config.mission_file_path, "mission_points.yaml");
         assert!(config.color_parameter_hierarchy);
+        assert_eq!(config.launch_target_mode, LaunchTargetMode::Docker);
+        assert_eq!(config.docker_container_name, "perse_container");
+        assert_eq!(config.docker_entrypoint, "");
     }
 
     #[test]

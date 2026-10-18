@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
-use crate::panels::parameters::{PackageParams, ParamFile, Parameter, ParameterValue, Scope};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::panels::parameters::PackageParams;
+use crate::panels::parameters::{ParamFile, Parameter, ParameterValue, Scope};
 
 /// Diretórios que devem ser ignorados ao escanear a workspace
 pub const IGNORED_DIRS: &[&str] = &[
@@ -473,6 +476,7 @@ pub fn format_param_yaml_value(val: &ParameterValue) -> String {
 }
 
 /// Coleta recursivamente todos os parâmetros com seu caminho hierárquico
+#[cfg(not(target_arch = "wasm32"))]
 fn collect_params_recursive(
     scope: &Scope,
     prefix_path: &[String],

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
-use crate::panels::launchfiles::{LaunchFile, LaunchKind, LaunchPackage};
+use crate::panels::launchfiles::{LaunchArgument, LaunchFile, LaunchKind, LaunchPackage};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::panels::parameters::workspace::{find_packages_in_workspace, should_ignore_dir};
 
@@ -111,6 +111,12 @@ fn collect_launch_files_in_dir(
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
                 let desc = extract_launch_description(&content, kind);
 
+                let args = if kind == LaunchKind::Xml {
+                    extract_xml_args(&content)
+                } else {
+                    Vec::new()
+                };
+
                 if kind == LaunchKind::Xml {
                     let incs = extract_xml_includes(&content);
                     if !incs.is_empty() {
@@ -118,7 +124,7 @@ fn collect_launch_files_in_dir(
                     }
                 }
 
-                files.push(LaunchFile::new(rel_path, kind, desc));
+                files.push(LaunchFile::new(rel_path, kind, desc).with_arguments(args));
             }
         }
     }
@@ -265,6 +271,63 @@ pub fn extract_xml_includes(content: &str) -> Vec<(String, String)> {
     }
 
     includes
+}
+
+/// Extrai tags `<arg name="..." default="..." />` de arquivos XML
+pub fn extract_xml_args(content: &str) -> Vec<LaunchArgument> {
+    let mut args = Vec::new();
+    let mut cursor = content;
+
+    while let Some(arg_idx) = cursor.find("<arg") {
+        let rest = &cursor[arg_idx..];
+        let tag_end = rest.find('>').unwrap_or(rest.len());
+        let tag_content = &rest[..tag_end];
+
+        // Extrai atributo name
+        let name_opt = if let Some(n_idx) = tag_content.find("name=\"") {
+            let after = &tag_content[n_idx + 6..];
+            after.find('"').map(|end| after[..end].trim().to_string())
+        } else if let Some(n_idx) = tag_content.find("name='") {
+            let after = &tag_content[n_idx + 6..];
+            after.find('\'').map(|end| after[..end].trim().to_string())
+        } else {
+            None
+        };
+
+        if let Some(name) = name_opt {
+            if !name.is_empty() {
+                // Extrai default se presente (ou value se usado como default)
+                let default_val = if let Some(d_idx) = tag_content.find("default=\"") {
+                    let after = &tag_content[d_idx + 9..];
+                    after.find('"').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                } else if let Some(d_idx) = tag_content.find("default='") {
+                    let after = &tag_content[d_idx + 9..];
+                    after.find('\'').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                } else if let Some(v_idx) = tag_content.find("value=\"") {
+                    let after = &tag_content[v_idx + 7..];
+                    after.find('"').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                } else if let Some(v_idx) = tag_content.find("value='") {
+                    let after = &tag_content[v_idx + 7..];
+                    after.find('\'').map(|end| after[..end].trim().to_string()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                // Deduplica por nome: mantém a primeira ocorrência (ou atualiza se a existente estiver sem valor default)
+                if let Some(existing) = args.iter_mut().find(|a: &&mut LaunchArgument| a.name == name) {
+                    if existing.default_value.is_empty() && !default_val.is_empty() {
+                        existing.default_value = default_val;
+                    }
+                } else {
+                    args.push(LaunchArgument::new_from_file(name, default_val));
+                }
+            }
+        }
+
+        cursor = &rest[tag_end..];
+    }
+
+    args
 }
 
 /// Organiza os launch files em hierarquia e remove os incluídos da lista raiz para evitar duplicação
@@ -522,5 +585,29 @@ import os
                 "planner.launch não deve estar duplicado na raiz do pacote"
             );
         }
+    }
+
+    #[test]
+    fn test_extract_xml_args() {
+        let xml = r#"<launch>
+    <arg name="sim" default="false" description="Modo simulador"/>
+    <arg name="speed" default="1.5"/>
+    <arg name="robot_name" default="perse"/>
+    <!-- Comentário com <arg name="ignore" default="true"/> -->
+</launch>"#;
+        let args = extract_xml_args(xml);
+        assert_eq!(args.len(), 4); // extrai as tags arg
+        assert_eq!(args[0].name, "sim");
+        assert_eq!(args[0].default_value, "false");
+        assert_eq!(args[0].value, "");
+        assert!(args[0].from_file);
+
+        assert_eq!(args[1].name, "speed");
+        assert_eq!(args[1].default_value, "1.5");
+        assert_eq!(args[1].value, "");
+        assert!(args[1].from_file);
+
+        assert_eq!(args[2].name, "robot_name");
+        assert_eq!(args[2].default_value, "perse");
     }
 }

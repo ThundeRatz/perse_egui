@@ -349,7 +349,7 @@ impl ParametersPanel {
         _state: &AppState,
         color_hierarchy: bool,
         client: Option<&crate::net::client::ControlClient>,
-        workspace_path: Option<&str>,
+        _workspace_path: Option<&str>,
     ) {
         let is_first_frame = self.first_frame;
         self.first_frame = false;
@@ -470,7 +470,7 @@ impl ParametersPanel {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let ws = workspace_path
+                    let ws = _workspace_path
                         .filter(|p| !p.trim().is_empty())
                         .map(|p| p.to_string())
                         .unwrap_or_else(crate::config::default_workspace_path);

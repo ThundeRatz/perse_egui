@@ -97,6 +97,21 @@ pub struct LaunchfileActionRequest {
     pub package: String,
     pub filename: String,
     pub action: String, // "start" ou "stop"
+    #[serde(default)]
+    pub target_mode: Option<crate::config::LaunchTargetMode>,
+    #[serde(default)]
+    pub container_name: Option<String>,
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetLaunchConfigRequest {
+    pub target_mode: crate::config::LaunchTargetMode,
+    pub container_name: String,
+    pub entrypoint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
