@@ -50,6 +50,25 @@ impl RewireIntegration {
             rerun_app.add_log_receiver(log_receiver);
             rerun_app.add_log_receiver(control_receiver);
 
+            // Garante que o blueprint padrão esteja presente no diretório de persistência do Rerun (~/.local/share/rerun/blueprints/rewire.rbl)
+            // Dessa forma o Rerun carrega o blueprint nativamente sem criar data sources nem poluir timelines com chunks de arquivo
+            let web_dir = crate::net::daemon::resolve_web_directory(None);
+            let default_bpt = web_dir.join("default_blueprint.rbl");
+            if default_bpt.exists() {
+                if let Some(storage_dir) = eframe::storage_dir("rerun") {
+                    let dest_dir = storage_dir.join("blueprints");
+                    let _ = std::fs::create_dir_all(&dest_dir);
+                    let target_rbl = dest_dir.join("rewire.rbl");
+                    if !target_rbl.exists() {
+                        if let Err(err) = std::fs::copy(&default_bpt, &target_rbl) {
+                            re_log::warn!("Falha ao copiar blueprint padrão para {target_rbl:?}: {err}");
+                        } else {
+                            re_log::info!("Blueprint padrão semeado com sucesso em {target_rbl:?}");
+                        }
+                    }
+                }
+            }
+
             let viewer = RewireApp::new(rerun_app, link);
 
             Ok(Self {
@@ -87,6 +106,20 @@ impl RewireIntegration {
                 re_log::info!("Opening WASM Rerun URL: {}", url);
                 rerun_app.open_url_or_file(&url);
             }
+
+            let blueprint_url = if let Some(window) = web_sys::window() {
+                let loc = window.location();
+                let origin = loc.origin().unwrap_or_default();
+                if !origin.is_empty() {
+                    format!("{}/default_blueprint.rbl", origin.trim_end_matches('/'))
+                } else {
+                    "default_blueprint.rbl".to_string()
+                }
+            } else {
+                "default_blueprint.rbl".to_string()
+            };
+            re_log::info!("Carregando blueprint padrão WASM: {}", blueprint_url);
+            rerun_app.open_url_or_file(&blueprint_url);
 
             let viewer = RewireApp::new(rerun_app);
             Ok(Self {

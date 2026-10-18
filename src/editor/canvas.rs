@@ -635,6 +635,7 @@ impl EditorCanvas {
         robot_pose: Option<[f32; 3]>,
         robot_glowing: bool,
         route_strips: &[(Color32, Vec<[f32; 2]>)],
+        look_ahead_point: Option<[f32; 2]>,
         zoom_speed: f32,
     ) -> Response {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
@@ -685,10 +686,15 @@ impl EditorCanvas {
         // 5. Renderizar Rota (LineStrips3D da timeline)
         draw_route_strips(&painter, rect, state, route_strips);
 
-        // 6. Renderizar Trajetória dos Marcos e Pontos
+        // 6. Renderizar Ponto Look-Ahead da Stanley / trajetória
+        if let Some(target) = look_ahead_point {
+            draw_look_ahead_point(&painter, rect, state, target);
+        }
+
+        // 7. Renderizar Trajetória dos Marcos e Pontos
         draw_points_and_path(&painter, rect, state, &data.points, &empty_selection);
 
-        // 7. Renderizar Robô (InstancePoses3D + Scalar para brilho)
+        // 8. Renderizar Robô (InstancePoses3D + Scalar para brilho)
         let robot = robot_pose.unwrap_or([0.0, 0.0, 0.0]);
         draw_robot(&painter, rect, state, robot, robot_glowing);
 
@@ -1240,6 +1246,39 @@ fn draw_robot(painter: &Painter, rect: Rect, state: &CanvasState, pose: [f32; 3]
         robot_fill,
         robot_stroke,
     ));
+}
+
+fn draw_look_ahead_point(
+    painter: &Painter,
+    rect: Rect,
+    state: &CanvasState,
+    point: [f32; 2],
+) {
+    let screen_pos = state.world_to_screen(vec2(point[0], point[1]), rect);
+
+    // Halo / Anel externo translúcido
+    painter.circle_stroke(
+        screen_pos,
+        10.0,
+        Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 170, 0, 180)),
+    );
+    // Ponto central vibrante cor laranja/âmbar
+    painter.circle_filled(
+        screen_pos,
+        4.5,
+        Color32::from_rgb(255, 185, 30),
+    );
+    // Cruz central
+    let arm = 7.0;
+    let stroke_cross = Stroke::new(1.2, Color32::from_rgb(255, 230, 100));
+    painter.line_segment(
+        [screen_pos - vec2(arm, 0.0), screen_pos + vec2(arm, 0.0)],
+        stroke_cross,
+    );
+    painter.line_segment(
+        [screen_pos - vec2(0.0, arm), screen_pos + vec2(0.0, arm)],
+        stroke_cross,
+    );
 }
 
 fn draw_poly_building(

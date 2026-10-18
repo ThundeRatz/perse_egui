@@ -1,14 +1,15 @@
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use re_chunk_store::external::re_chunk::Chunk;
 use re_chunk_store::LatestAtQuery;
-use re_log_types::{EntityPath, StoreId, TimeInt, TimePoint, Timeline, Timestamp};
-use re_sdk_types::archetypes::{InstancePoses3D, LineStrips3D, Points2D, Scalars, TextDocument, Transform3D};
+use re_log_types::{EntityPath, StoreId, TimeInt, TimePoint, Timeline};
+use re_sdk_types::archetypes::{
+    InstancePoses3D, LineStrips3D, Points2D, Points3D, Scalars, TextDocument, Transform3D,
+};
 use re_sdk_types::components::{
-    Color, LineStrip3D, Position2D, Radius, RotationAxisAngle, RotationQuat, Scalar, Text,
-    TransformMat3x3, Translation3D,
+    Color, LineStrip3D, Position2D, Position3D, Radius, RotationAxisAngle, RotationQuat, Scalar,
+    Text, TransformMat3x3, Translation3D,
 };
 use re_sdk_types::reflection::{ViewApplicability, ViewReflection};
 use re_sdk_types::ViewClassIdentifier;
@@ -28,24 +29,21 @@ pub const MISSION_POINTS_ENTITY_PATH: &str = "/mission/points";
 struct MissionLogSyncState {
     last_store_id: Option<StoreId>,
     last_save_generation: u64,
-    seeded_timelines: BTreeSet<String>,
 }
 
 static MISSION_LOG_SYNC: OnceLock<Mutex<MissionLogSyncState>> = OnceLock::new();
-static MISSION_LOG_TICK: AtomicU64 = AtomicU64::new(1);
 
 fn get_sync_state() -> &'static Mutex<MissionLogSyncState> {
     MISSION_LOG_SYNC.get_or_init(|| {
         Mutex::new(MissionLogSyncState {
             last_store_id: None,
             last_save_generation: crate::editor::mission_save_generation(),
-            seeded_timelines: BTreeSet::new(),
         })
     })
 }
 
 /// Sincroniza os pontos de missão com a gravação ativa do Rerun sempre que:
-/// 1. Entramos em uma nova gravação (ou surgem novas timelines na gravação atual sem log inicial), ou
+/// 1. Entramos em uma nova gravação, ou
 /// 2. O arquivo de missão é salvo (`notify_mission_saved`).
 pub fn sync_mission_points_to_rerun(rerun_app: &re_viewer::App) {
     let Some(recording) = rerun_app.recording_db() else {
@@ -66,16 +64,7 @@ pub fn ensure_mission_points_logged(
     let is_new_recording = sync_guard.last_store_id.as_ref() != Some(&store_id);
     let is_saved = current_gen != sync_guard.last_save_generation;
 
-    let current_timeline_names: BTreeSet<String> = recording
-        .timelines()
-        .keys()
-        .map(|k| k.as_str().to_string())
-        .collect();
-    let has_unseeded_timelines = current_timeline_names
-        .iter()
-        .any(|tl| !sync_guard.seeded_timelines.contains(tl));
-
-    if !is_new_recording && !is_saved && !has_unseeded_timelines {
+    if !is_new_recording && !is_saved {
         return;
     }
 
@@ -85,49 +74,16 @@ pub fn ensure_mission_points_logged(
         guard.active_data().cloned().unwrap_or_default()
     };
 
-    if is_new_recording {
-        sync_guard.last_store_id = Some(store_id.clone());
-        sync_guard.last_save_generation = current_gen;
-        sync_guard.seeded_timelines = current_timeline_names;
-        log_mission_data_chunk(recording, command_sender, &mission_data, true);
-    } else if is_saved {
-        sync_guard.last_save_generation = current_gen;
-        sync_guard.seeded_timelines.extend(current_timeline_names);
-        log_mission_data_chunk(recording, command_sender, &mission_data, false);
-    } else if has_unseeded_timelines {
-        sync_guard.seeded_timelines.extend(current_timeline_names);
-        log_mission_data_chunk(recording, command_sender, &mission_data, true);
-    }
+    sync_guard.last_store_id = Some(store_id);
+    sync_guard.last_save_generation = current_gen;
+    log_mission_data_chunk(recording, command_sender, &mission_data);
 }
 
 fn log_mission_data_chunk(
     recording: &EntityDb,
     command_sender: &CommandSender,
     data: &MissionData,
-    is_initial: bool,
 ) {
-    let mut timepoint = TimePoint::default();
-    let now_nanos = Timestamp::now().nanos_since_epoch();
-
-    if is_initial {
-        timepoint.insert(Timeline::log_time(), TimeInt::new_temporal(now_nanos));
-        timepoint.insert(Timeline::log_tick(), TimeInt::new_temporal(0));
-        for (tl_name, timeline) in recording.timelines() {
-            if let Some(range) = recording.time_range_for(&tl_name) {
-                timepoint.insert(timeline, range.min());
-            }
-        }
-    } else {
-        let tick = MISSION_LOG_TICK.fetch_add(1, Ordering::Relaxed) as i64;
-        timepoint.insert(Timeline::log_time(), TimeInt::new_temporal(now_nanos));
-        timepoint.insert(Timeline::log_tick(), TimeInt::new_temporal(tick));
-        for (tl_name, timeline) in recording.timelines() {
-            if let Some(range) = recording.time_range_for(&tl_name) {
-                timepoint.insert(timeline, range.max());
-            }
-        }
-    }
-
     let positions: Vec<[f32; 2]> = data.points.iter().map(|p| [p.x, p.y]).collect();
     let radii: Vec<f32> = data.points.iter().map(|p| p.get_margin()).collect();
     let labels: Vec<String> = data
@@ -146,8 +102,8 @@ fn log_mission_data_chunk(
 
     let entity_path = EntityPath::from(MISSION_POINTS_ENTITY_PATH);
     let chunk_res = Chunk::builder(entity_path)
-        .with_archetype_auto_row(timepoint.clone(), &points_arch)
-        .with_archetype_auto_row(timepoint, &doc_arch)
+        .with_archetype_auto_row(TimePoint::STATIC, &points_arch)
+        .with_archetype_auto_row(TimePoint::STATIC, &doc_arch)
         .build();
 
     if let Ok(chunk) = chunk_res {
@@ -164,6 +120,7 @@ pub struct MissionSpaceViewState {
     pub pose_entity: String,
     pub route_entity: String,
     pub glow_entity: String,
+    pub look_ahead_entity: String,
     pub last_known_param_keys: BTreeSet<String>,
 }
 
@@ -175,6 +132,7 @@ impl Default for MissionSpaceViewState {
             pose_entity: String::new(),
             route_entity: String::new(),
             glow_entity: String::new(),
+            look_ahead_entity: String::new(),
             last_known_param_keys: BTreeSet::new(),
         }
     }
@@ -316,6 +274,13 @@ impl ViewClass for MissionSpaceView {
                 TextDocument::descriptor_text().component,
             ],
         );
+        let look_ahead_candidates = find_entities_with_any_component(
+            recording,
+            &[
+                Points3D::descriptor_positions().component,
+                Points2D::descriptor_positions().component,
+            ],
+        );
 
         egui::Grid::new("mission_space_view_entities_grid")
             .num_columns(2)
@@ -357,6 +322,16 @@ impl ViewClass for MissionSpaceView {
                     "glow_entity_combo",
                     &mut state.glow_entity,
                     &glow_candidates,
+                    "Auto",
+                );
+                ui.end_row();
+
+                ui.label("Look-ahead (Points3D/2D):");
+                entity_selector_combo(
+                    ui,
+                    "look_ahead_entity_combo",
+                    &mut state.look_ahead_entity,
+                    &look_ahead_candidates,
                     "Auto",
                 );
                 ui.end_row();
@@ -412,6 +387,10 @@ impl ViewClass for MissionSpaceView {
         let route_strips =
             query_route_strips_at_timeline(recording, &latest_query, &state.route_entity);
 
+        // 5. Consultar look-ahead point (Points3D / Points2D) na timeline
+        let look_ahead_point =
+            query_look_ahead_at_timeline(recording, &latest_query, &state.look_ahead_entity);
+
         let zoom_speed = crate::editor::get_shared_zoom_speed();
         EditorCanvas::show_read_only(
             ui,
@@ -420,6 +399,7 @@ impl ViewClass for MissionSpaceView {
             robot_pose,
             robot_glowing,
             &route_strips,
+            look_ahead_point,
             zoom_speed,
         );
 
@@ -518,8 +498,21 @@ fn query_mission_data_at_timeline(
         return Some(data);
     }
 
+    // Se a query temporal não encontrar dados temporais, tenta buscar dados estáticos gravados na entidade
+    let static_query = LatestAtQuery::new_static();
+    if let Some(data) = query_mission_data_at_entity(
+        recording,
+        &static_query,
+        &entity_path,
+        text_comp,
+        pos_comp,
+        rad_comp,
+    ) {
+        return Some(data);
+    }
+
     // Caso o cursor da timeline esteja antes do primeiro ponto salvo nessa timeline,
-    // busca o primeiro registro disponível na timeline log_time (TimeInt::MAX) como estado inicial da gravação.
+    // busca o registro disponível na timeline log_time (TimeInt::MAX) como fallback.
     let fallback_query = LatestAtQuery::new(*Timeline::log_time().name(), TimeInt::MAX);
     query_mission_data_at_entity(
         recording,
@@ -748,6 +741,48 @@ fn query_robot_glow_at_timeline(
     false
 }
 
+fn query_look_ahead_at_timeline(
+    recording: &EntityDb,
+    query: &LatestAtQuery,
+    look_ahead_entity_override: &str,
+) -> Option<[f32; 2]> {
+    let pos3d_comp = Points3D::descriptor_positions().component;
+    let pos2d_comp = Points2D::descriptor_positions().component;
+
+    let candidates: Vec<EntityPath> = if !look_ahead_entity_override.trim().is_empty() {
+        vec![EntityPath::from(look_ahead_entity_override.trim())]
+    } else {
+        let mut all = find_entities_with_any_component(recording, &[pos3d_comp, pos2d_comp]);
+        all.sort_by_key(|ep| {
+            let s = ep.to_string().to_lowercase();
+            if s.contains("look_ahead") || s.contains("lookahead") {
+                0
+            } else if s.contains("trajectory") {
+                1
+            } else {
+                2
+            }
+        });
+        all
+    };
+
+    for entity_path in candidates {
+        let results = recording.latest_at(query, &entity_path, [pos3d_comp, pos2d_comp]);
+        if let Some(pts3d) = results.component_batch_quiet::<Position3D>(pos3d_comp) {
+            if let Some(first) = pts3d.first() {
+                return Some([first.0 .0[0], first.0 .0[1]]);
+            }
+        }
+        if let Some(pts2d) = results.component_batch_quiet::<Position2D>(pos2d_comp) {
+            if let Some(first) = pts2d.first() {
+                return Some([first.0 .0[0], first.0 .0[1]]);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -872,6 +907,74 @@ mod tests {
 
         let q2 = LatestAtQuery::new(TimelineName::from("step"), TimeInt::new_temporal(22));
         assert!(query_robot_glow_at_timeline(&db, &q2, ""));
+    }
+
+    #[test]
+    fn test_static_mission_points() {
+        let mut db = make_test_db();
+        let _tl = Timeline::new_sequence("ros_time");
+
+        let mut data = MissionData::default();
+        data.points.push(MissionPoint::new(10.0, 20.0));
+
+        let positions: Vec<[f32; 2]> = data.points.iter().map(|p| [p.x, p.y]).collect();
+        let radii: Vec<f32> = data.points.iter().map(|p| p.get_margin()).collect();
+        let labels: Vec<String> = data
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("M{}", i))
+            .collect();
+
+        let points_arch = Points2D::new(positions)
+            .with_radii(radii)
+            .with_labels(labels);
+        let doc_arch = TextDocument::new(serde_json::to_string(&data).unwrap());
+
+        let entity_path = EntityPath::from(MISSION_POINTS_ENTITY_PATH);
+        let chunk = Chunk::builder(entity_path)
+            .with_archetype_auto_row(TimePoint::STATIC, &points_arch)
+            .with_archetype_auto_row(TimePoint::STATIC, &doc_arch)
+            .build()
+            .unwrap();
+
+        db.add_chunk(&Arc::new(chunk)).unwrap();
+
+        // Querying on ros_time at any arbitrary timestamp should resolve static mission data!
+        let q = LatestAtQuery::new(TimelineName::from("ros_time"), TimeInt::new_temporal(5000));
+        let res = query_mission_data_at_timeline(&db, &q, "").unwrap();
+        assert_eq!(res.points.len(), 1);
+        assert_eq!(res.points[0].x, 10.0);
+        assert_eq!(res.points[0].y, 20.0);
+    }
+
+    #[test]
+    fn test_timeline_look_ahead_point() {
+        let mut db = make_test_db();
+        let tl = Timeline::new_sequence("step");
+        let tp1 = TimePoint::from([(tl, TimeInt::new_temporal(10))]);
+        let tp2 = TimePoint::from([(tl, TimeInt::new_temporal(20))]);
+
+        let look_ahead_chunk1 = Chunk::builder(EntityPath::from("trajectory/look_ahead_point"))
+            .with_archetype_auto_row(tp1, &Points3D::new([[2.5, 4.0, 0.0]]))
+            .build()
+            .unwrap();
+
+        let look_ahead_chunk2 = Chunk::builder(EntityPath::from("trajectory/look_ahead_point"))
+            .with_archetype_auto_row(tp2, &Points3D::new([[3.8, 5.2, 0.0]]))
+            .build()
+            .unwrap();
+
+        db.add_chunk(&Arc::new(look_ahead_chunk1)).unwrap();
+        db.add_chunk(&Arc::new(look_ahead_chunk2)).unwrap();
+
+        let q1 = LatestAtQuery::new(TimelineName::from("step"), TimeInt::new_temporal(15));
+        let pt1 = query_look_ahead_at_timeline(&db, &q1, "").unwrap();
+        assert_eq!(pt1, [2.5, 4.0]);
+
+        let q2 = LatestAtQuery::new(TimelineName::from("step"), TimeInt::new_temporal(25));
+        let pt2 = query_look_ahead_at_timeline(&db, &q2, "").unwrap();
+        assert_eq!(pt2, [3.8, 5.2]);
     }
 }
 

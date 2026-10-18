@@ -537,6 +537,7 @@ impl App for MyApp {
 
         // Barra superior de ferramentas
         egui::Panel::top("perse_toolbar").show(ui, |ui| {
+            let toolbar_rect = ui.available_rect_before_wrap();
             ui.horizontal(|ui| {
                 // Menu de contexto ao clicar em "Perse Egui ⏷" (semelhante ao rerun)
                 ui.menu_button("Perse Egui ⏷", |ui| {
@@ -566,84 +567,96 @@ impl App for MyApp {
                     self.config.show_sidebar = !self.config.show_sidebar;
                 }
 
-                // Alternância do painel direito ("Terminais") com destaque por cor (branco se aberto, cinza se fechado)
-                if crate::panels::components::re_icon_toggle_button(
-                    ui,
-                    &re_ui::icons::RIGHT_PANEL_TOGGLE,
-                    "Terminais",
-                    self.config.show_right_sidebar,
-                )
-                .clicked()
-                {
-                    self.config.show_right_sidebar = !self.config.show_right_sidebar;
-                }
+                ui.add_space(4.0);
 
-                ui.separator();
+                // Indicador do Host WebSocket à esquerda, logo após Painéis
+                let is_conn = self.control_client.is_connected();
+                let dot_color = if is_conn {
+                    egui::Color32::from_rgb(50, 220, 100)
+                } else {
+                    egui::Color32::from_rgb(240, 180, 50)
+                };
 
-                // Alternância entre Rerun Viewer e Editor 2D de Missão
-                let is_editor = self.view_mode == ViewMode::MissionEditor;
-                if crate::panels::components::re_icon_toggle_button(
-                    ui,
-                    &re_ui::icons::VIEW_2D,
-                    "Editor 2D de Missão",
-                    is_editor,
-                )
-                .clicked()
-                {
-                    self.view_mode = if is_editor {
-                        ViewMode::RerunViewer
+                let label = if is_conn {
+                    "● Host Conectado".to_string()
+                } else {
+                    format!("○ {}", self.control_client.status_message())
+                };
+                ui.label(egui::RichText::new(label).color(dot_color).size(11.0))
+                    .on_hover_text(if is_conn {
+                        "Conectado ao Host do robô"
                     } else {
-                        ViewMode::MissionEditor
-                    };
-                }
+                        "Desconectado do Host. Tentativa automática em segundo plano a cada 3s."
+                    });
 
-                // Indicador do Host WebSocket e botão de reconexão à direita
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let is_conn = self.control_client.is_connected();
-                    let dot_color = if is_conn {
-                        egui::Color32::from_rgb(50, 220, 100)
+                if !is_conn {
+                    let is_connecting = self.control_client.is_connecting();
+                    let btn_text = if is_connecting {
+                        "⏳ Conectando..."
                     } else {
-                        egui::Color32::from_rgb(240, 180, 50)
+                        "🔄 Reconectar"
                     };
-
-                    if !is_conn {
-                        let is_connecting = self.control_client.is_connecting();
-                        let btn_text = if is_connecting {
-                            "⏳ Conectando..."
-                        } else {
-                            "🔄 Reconectar"
-                        };
-                        let reconnect_btn = ui.add_enabled(
-                            !is_connecting,
-                            egui::Button::new(
-                                egui::RichText::new(btn_text)
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(220, 220, 220)),
-                            ),
-                        );
-                        if reconnect_btn
-                            .on_hover_text("Tentar reconectar ao Host WebSocket e ao stream Rerun agora")
-                            .clicked()
-                        {
-                            let now = ui.ctx().input(|i| i.time);
-                            self.last_reconnect_attempt = now;
-                            self.reconnect();
-                        }
+                    let reconnect_btn = ui.add_enabled(
+                        !is_connecting,
+                        egui::Button::new(
+                            egui::RichText::new(btn_text)
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(220, 220, 220)),
+                        ),
+                    );
+                    if reconnect_btn
+                        .on_hover_text("Tentar reconectar ao Host WebSocket e ao stream Rerun agora")
+                        .clicked()
+                    {
+                        let now = ui.ctx().input(|i| i.time);
+                        self.last_reconnect_attempt = now;
+                        self.reconnect();
                     }
+                }
 
-                    let label = if is_conn {
-                        "● Host Conectado".to_string()
-                    } else {
-                        format!("○ {}", self.control_client.status_message())
-                    };
-                    ui.label(egui::RichText::new(label).color(dot_color).size(11.0))
-                        .on_hover_text(if is_conn {
-                            "Conectado ao Host do robô"
-                        } else {
-                            "Desconectado do Host. Tentativa automática em segundo plano a cada 3s."
-                        });
+                // Extrema Direita: Terminais
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::panels::components::re_icon_toggle_button(
+                        ui,
+                        &re_ui::icons::RIGHT_PANEL_TOGGLE,
+                        "Terminais",
+                        self.config.show_right_sidebar,
+                    )
+                    .clicked()
+                    {
+                        self.config.show_right_sidebar = !self.config.show_right_sidebar;
+                    }
                 });
             });
+
+            // Centro: Editor 2D de Missão centralizado na barra superior
+            let is_editor = self.view_mode == ViewMode::MissionEditor;
+            let center_x = toolbar_rect.center().x;
+            let btn_width = 175.0;
+            let btn_height = 22.0;
+            let center_pos = egui::pos2(
+                (center_x - btn_width * 0.5).max(toolbar_rect.min.x),
+                toolbar_rect.min.y + (toolbar_rect.height() - btn_height) * 0.5,
+            );
+            let mut center_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_size(center_pos, egui::vec2(btn_width, btn_height)))
+                    .layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)),
+            );
+            if crate::panels::components::re_icon_toggle_button(
+                &mut center_ui,
+                &re_ui::icons::VIEW_2D,
+                "Editor 2D de Missão",
+                is_editor,
+            )
+            .clicked()
+            {
+                self.view_mode = if is_editor {
+                    ViewMode::RerunViewer
+                } else {
+                    ViewMode::MissionEditor
+                };
+            }
         });
 
         let panel_bg = ui.visuals().panel_fill;
@@ -673,6 +686,10 @@ impl App for MyApp {
                             Some(&self.control_client),
                             Some(&self.config.workspace_path),
                         );
+                        if self.parameters_panel.request_open_settings {
+                            self.parameters_panel.request_open_settings = false;
+                            self.settings_panel.open = true;
+                        }
                     });
 
                 // Subpainel inferior: Launchfiles

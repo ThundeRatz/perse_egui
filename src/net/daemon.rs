@@ -82,7 +82,7 @@ impl HostState {
             );
             scanned_pkgs
         } else {
-            crate::panels::parameters::create_mock_parameters()
+            Vec::new()
         };
 
         Self {
@@ -1105,6 +1105,11 @@ mod tests {
         // Sem caminho customizado, deve resolver para um caminho (ex: ./web ou fallback)
         let default_resolved = resolve_web_directory(None);
         assert!(!default_resolved.as_os_str().is_empty());
+
+        let blueprint_candidate = default_resolved.join("default_blueprint.rbl");
+        if blueprint_candidate.exists() {
+            assert!(blueprint_candidate.is_file());
+        }
     }
 
     #[tokio::test]

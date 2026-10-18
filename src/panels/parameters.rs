@@ -271,18 +271,20 @@ pub struct ParametersPanel {
     pub first_frame: bool,
     pub is_panel_focused: bool,
     pub refresh_in_progress: bool,
+    pub request_open_settings: bool,
 }
 
 #[cfg(feature = "viewer")]
 impl Default for ParametersPanel {
     fn default() -> Self {
         Self {
-            packages: create_mock_parameters(),
+            packages: Vec::new(),
             search_active: false,
             search_query: String::new(),
             first_frame: true,
             is_panel_focused: false,
             refresh_in_progress: false,
+            request_open_settings: false,
         }
     }
 }
@@ -499,6 +501,35 @@ impl ParametersPanel {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
+
+                        if self.packages.is_empty() {
+                            ui.add_space(16.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("Nenhum parâmetro encontrado.")
+                                        .strong()
+                                        .color(Color32::from_gray(210)),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Configure o caminho da workspace ROS nas configurações para carregar os parâmetros dos pacotes.")
+                                        .color(Color32::from_gray(160)),
+                                );
+                                ui.add_space(12.0);
+                                if crate::panels::components::re_icon_text_button(
+                                    ui,
+                                    &re_ui::icons::SETTINGS,
+                                    "Abrir Configurações",
+                                )
+                                .on_hover_text("Abrir janela de Configurações para definir o caminho da workspace")
+                                .clicked()
+                                {
+                                    self.request_open_settings = true;
+                                }
+                            });
+                            return;
+                        }
+
                         let query = self.search_query.trim().to_lowercase();
 
                         let visible_packages: Vec<&mut PackageParams> = self
@@ -510,7 +541,7 @@ impl ParametersPanel {
                         if visible_packages.is_empty() {
                             ui.add_space(8.0);
                             ui.label(
-                                RichText::new("Nenhum parâmetro encontrado")
+                                RichText::new("Nenhum parâmetro encontrado para a busca.")
                                     .italics()
                                     .color(Color32::GRAY),
                             );
@@ -1305,7 +1336,10 @@ mod tests {
     #[test]
     #[cfg(feature = "viewer")]
     fn test_parameters_panel_apply_all() {
-        let mut panel = ParametersPanel::default();
+        let mut panel = ParametersPanel {
+            packages: create_mock_parameters(),
+            ..Default::default()
+        };
         assert_eq!(panel.count_modified(), 0);
 
         // Modify a parameter value
