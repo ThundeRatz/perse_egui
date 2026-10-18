@@ -155,6 +155,11 @@ impl ControlClient {
                                 "get_data",
                                 serde_json::Value::Null,
                             ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Terminal,
+                                "get_list",
+                                serde_json::Value::Null,
+                            ),
                         ];
                         for req in initial_reqs {
                             if let Ok(j) = serde_json::to_string(&req) {
@@ -265,6 +270,11 @@ impl ControlClient {
                             ControlMessage::new(
                                 crate::net::protocol::Domain::Mission,
                                 "get_data",
+                                serde_json::Value::Null,
+                            ),
+                            ControlMessage::new(
+                                crate::net::protocol::Domain::Terminal,
+                                "get_list",
                                 serde_json::Value::Null,
                             ),
                         ];

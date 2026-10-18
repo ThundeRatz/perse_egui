@@ -1,60 +1,257 @@
 #[cfg(feature = "viewer")]
 use egui::{Color32, Frame, Margin, RichText, Ui};
-use serde::{Deserialize, Serialize};
+
+pub mod key_mapper;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pty_manager;
+pub mod session;
+pub mod widget;
 
 #[cfg(feature = "viewer")]
+use crate::config::{AppConfig, LaunchTargetMode};
+#[cfg(feature = "viewer")]
+use crate::net::client::ControlClient;
+#[cfg(feature = "viewer")]
+use crate::net::protocol::{
+    ControlMessage, Domain, TerminalCloseRequest, TerminalCreateRequest, TerminalInputMessage,
+    TerminalListSyncResponse, TerminalOutputMessage, TerminalResizeMessage, TerminalStatusMessage,
+    TerminalTarget,
+};
+#[cfg(feature = "viewer")]
 use crate::panels::components::{re_icon_button, section_header};
-
-/// Uma aba / processo de terminal
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalTab {
-    pub id: usize,
-    pub title: String,
-    pub is_running: bool,
-    pub auto_scroll: bool,
-    pub output_lines: Vec<String>,
-}
-
-impl TerminalTab {
-    pub fn new(id: usize, title: impl Into<String>, lines: Vec<&str>) -> Self {
-        Self {
-            id,
-            title: title.into(),
-            is_running: true,
-            auto_scroll: true,
-            output_lines: lines.into_iter().map(|s| s.to_string()).collect(),
-        }
-    }
-}
+#[cfg(feature = "viewer")]
+use session::TerminalSession;
+#[cfg(feature = "viewer")]
+use widget::show_terminal_widget;
 
 /// Painel de Terminais (posicionado na Sidebar Direita Resizable)
 #[cfg(feature = "viewer")]
-#[derive(Debug)]
 pub struct TerminalsPanel {
-    pub tabs: Vec<TerminalTab>,
+    pub sessions: Vec<TerminalSession>,
     pub active_tab_index: usize,
     pub search_active: bool,
     pub search_query: String,
-    pub command_input: String,
+    pub selected_target: TerminalTarget,
+    next_counter: usize,
+    initialized_target_from_config: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    local_pty_manager: pty_manager::PtyManager,
+    #[cfg(not(target_arch = "wasm32"))]
+    local_events_rx: std::sync::mpsc::Receiver<LocalPtyEvent>,
+    #[cfg(not(target_arch = "wasm32"))]
+    local_events_tx: std::sync::mpsc::Sender<LocalPtyEvent>,
+}
+
+#[cfg(all(feature = "viewer", not(target_arch = "wasm32")))]
+enum LocalPtyEvent {
+    Output(String, Vec<u8>),
+    Exit(String),
 }
 
 #[cfg(feature = "viewer")]
 impl Default for TerminalsPanel {
     fn default() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let (tx, rx) = std::sync::mpsc::channel();
+
         Self {
-            tabs: create_mock_terminals(),
+            sessions: Vec::new(),
             active_tab_index: 0,
             search_active: false,
             search_query: String::new(),
-            command_input: String::new(),
+            selected_target: TerminalTarget::Host,
+            next_counter: 1,
+            initialized_target_from_config: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            local_pty_manager: pty_manager::PtyManager::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            local_events_rx: rx,
+            #[cfg(not(target_arch = "wasm32"))]
+            local_events_tx: tx,
         }
     }
 }
 
 #[cfg(feature = "viewer")]
 impl TerminalsPanel {
-    pub fn ui(&mut self, ui: &mut Ui, client: Option<&crate::net::client::ControlClient>) {
-        // Cabeçalho com modo de busca inline
+    /// Sincroniza a lista de sessões ativas recebida do daemon (ex: ao abrir ou dar F5 no navegador).
+    pub fn apply_list_sync(&mut self, sync: TerminalListSyncResponse, now_ms: u64) {
+        self.sessions.clear();
+        for summary in sync.sessions {
+            let mut session = TerminalSession::with_size(
+                summary.id.clone(),
+                summary.title,
+                summary.target,
+                summary.cols,
+                summary.rows,
+            );
+            session.is_running = summary.is_running;
+            if !summary.initial_bytes.is_empty() {
+                session.process_bytes(&summary.initial_bytes, now_ms);
+            }
+            self.sessions.push(session);
+        }
+        self.next_counter = self.sessions.len() + 1;
+        if self.active_tab_index >= self.sessions.len() {
+            self.active_tab_index = self.sessions.len().saturating_sub(1);
+        }
+    }
+
+    /// Processa bytes de saída recebidos do daemon para um terminal específico.
+    pub fn handle_output(&mut self, msg: TerminalOutputMessage, now_ms: u64) {
+        if let Some(session) = self.sessions.iter_mut().find(|s| s.id == msg.id) {
+            session.process_bytes(&msg.data, now_ms);
+        }
+    }
+
+    /// Atualiza o status de execução (rodando/finalizado) ou cria a sessão caso tenha sido aberta em outro cliente.
+    pub fn handle_status(&mut self, msg: TerminalStatusMessage) {
+        if let Some(session) = self.sessions.iter_mut().find(|s| s.id == msg.id) {
+            session.is_running = msg.is_running;
+            session.title = msg.title;
+        } else {
+            let mut session = TerminalSession::new(msg.id, msg.title, msg.target);
+            session.is_running = msg.is_running;
+            self.sessions.push(session);
+            self.active_tab_index = self.sessions.len() - 1;
+        }
+    }
+
+    /// Remove uma aba caso tenha sido fechada remotamente.
+    pub fn handle_closed(&mut self, id: &str) {
+        if let Some(pos) = self.sessions.iter().position(|s| s.id == id) {
+            self.sessions.remove(pos);
+            if self.active_tab_index >= self.sessions.len() {
+                self.active_tab_index = self.sessions.len().saturating_sub(1);
+            }
+        }
+    }
+
+    fn spawn_new_terminal(
+        &mut self,
+        target: TerminalTarget,
+        client: Option<&ControlClient>,
+        _config: Option<&AppConfig>,
+    ) {
+        let idx = self.next_counter;
+        self.next_counter += 1;
+
+        let target_label = match target {
+            TerminalTarget::Host => "Host",
+            TerminalTarget::Docker => "Docker",
+        };
+        let id = format!("term_{}_{}", idx, current_time_ms() % 100_000);
+        let title = format!("term_{} ({})", idx, target_label);
+        let cols = 80;
+        let rows = 24;
+
+        let session = TerminalSession::new(id.clone(), title.clone(), target);
+        self.sessions.push(session);
+        self.active_tab_index = self.sessions.len() - 1;
+
+        if let Some(c) = client {
+            c.send(ControlMessage::new(
+                Domain::Terminal,
+                "create",
+                serde_json::to_value(TerminalCreateRequest {
+                    id,
+                    title,
+                    target,
+                    cols,
+                    rows,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let (container, entrypoint, ws_path) = if let Some(cfg) = _config {
+                    (
+                        cfg.docker_container_name.as_str(),
+                        cfg.docker_entrypoint.as_str(),
+                        cfg.workspace_path.as_str(),
+                    )
+                } else {
+                    ("perse_container", "", "")
+                };
+                let tx_out = self.local_events_tx.clone();
+                let tx_exit = self.local_events_tx.clone();
+                if let Err(err) = self.local_pty_manager.create_session(
+                    id.clone(),
+                    title,
+                    target,
+                    cols,
+                    rows,
+                    container,
+                    entrypoint,
+                    ws_path,
+                    move |sid, data| {
+                        let _ = tx_out.send(LocalPtyEvent::Output(sid, data));
+                    },
+                    move |sid| {
+                        let _ = tx_exit.send(LocalPtyEvent::Exit(sid));
+                    },
+                ) {
+                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                        let msg = format!("\r\n\x1b[31m[Erro ao iniciar PTY: {}]\x1b[0m\r\n", err);
+                        s.process_bytes(msg.as_bytes(), current_time_ms());
+                        s.is_running = false;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        client: Option<&ControlClient>,
+        config: Option<&AppConfig>,
+    ) {
+        // Inicializa o seletor padrão de acordo com a configuração de LaunchTargetMode
+        if !self.initialized_target_from_config {
+            if let Some(cfg) = config {
+                self.selected_target = match cfg.launch_target_mode {
+                    LaunchTargetMode::Host => TerminalTarget::Host,
+                    LaunchTargetMode::Docker => TerminalTarget::Docker,
+                };
+                self.initialized_target_from_config = true;
+            }
+        }
+
+        // Drena eventos do PTY local caso esteja rodando nativo sem daemon remoto
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = current_time_ms();
+            let mut got_local_output = false;
+            while let Ok(ev) = self.local_events_rx.try_recv() {
+                match ev {
+                    LocalPtyEvent::Output(id, data) => {
+                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                            s.process_bytes(&data, now);
+                            got_local_output = true;
+                        }
+                    }
+                    LocalPtyEvent::Exit(id) => {
+                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                            s.is_running = false;
+                            s.process_bytes(
+                                b"\r\n\x1b[33m[Processo finalizado]\x1b[0m\r\n",
+                                now,
+                            );
+                            got_local_output = true;
+                        }
+                    }
+                }
+            }
+            if got_local_output {
+                ui.ctx().request_repaint();
+            }
+        }
+
+        let mut create_requested: Option<TerminalTarget> = None;
+
+        // Cabeçalho com seletor Host/Docker e botão + Novo Terminal
         section_header(
             ui,
             "Terminais",
@@ -62,30 +259,54 @@ impl TerminalsPanel {
             &mut self.search_query,
             |ui| {
                 if re_icon_button(ui, &re_ui::icons::ADD, "Novo Terminal").clicked() {
-                    let next_id = self.tabs.len() + 1;
-                    let title = format!("terminal_{}", next_id);
-                    self.tabs.push(TerminalTab::new(
-                        next_id,
-                        title.clone(),
-                        vec!["[INFO] [bash]: Terminal interativo iniciado."],
-                    ));
-                    self.active_tab_index = self.tabs.len() - 1;
-                    if let Some(c) = client {
-                        c.send(crate::net::protocol::ControlMessage::new(
-                            crate::net::protocol::Domain::Terminal,
-                            "create",
-                            serde_json::to_value(crate::net::protocol::TerminalCreateRequest {
-                                title,
-                            })
-                            .unwrap_or_default(),
-                        ));
-                    }
+                    create_requested = Some(self.selected_target);
                 }
+
+                // Seletor compacto do alvo (Host vs Container Docker)
+                egui::ComboBox::from_id_salt("terminal_target_selector")
+                    .width(78.0)
+                    .selected_text(match self.selected_target {
+                        TerminalTarget::Host => "Host",
+                        TerminalTarget::Docker => "Docker",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.selected_target,
+                            TerminalTarget::Host,
+                            "Host (Bash)",
+                        );
+                        ui.selectable_value(
+                            &mut self.selected_target,
+                            TerminalTarget::Docker,
+                            "Docker Container",
+                        );
+                    });
             },
         );
 
-        if self.tabs.is_empty() {
-            ui.label("Nenhum terminal ativo.");
+        if let Some(target) = create_requested {
+            self.spawn_new_terminal(target, client, config);
+        }
+
+        if self.sessions.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("Nenhum terminal aberto.")
+                        .color(Color32::from_gray(150)),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("+ Novo Terminal (Host)").clicked() {
+                        self.selected_target = TerminalTarget::Host;
+                        self.spawn_new_terminal(TerminalTarget::Host, client, config);
+                    }
+                    if ui.button("+ Novo Terminal (Docker)").clicked() {
+                        self.selected_target = TerminalTarget::Docker;
+                        self.spawn_new_terminal(TerminalTarget::Docker, client, config);
+                    }
+                });
+            });
             return;
         }
 
@@ -102,15 +323,15 @@ impl TerminalsPanel {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                     let mut tab_to_close = None;
-                    let can_close = self.tabs.len() > 1;
+                    let mut tab_to_activate = None;
 
-                    for (idx, tab) in self.tabs.iter().enumerate() {
+                    for (idx, session) in self.sessions.iter().enumerate() {
                         let is_active = idx == self.active_tab_index;
                         let (clicked_tab, clicked_close) =
-                            render_tab_pill(ui, &tab.title, tab.is_running, is_active, can_close);
+                            render_tab_pill(ui, &session.title, session.is_running, is_active);
 
                         if clicked_tab {
-                            self.active_tab_index = idx;
+                            tab_to_activate = Some(idx);
                         }
 
                         if clicked_close {
@@ -118,216 +339,112 @@ impl TerminalsPanel {
                         }
                     }
 
+                    if let Some(activate_idx) = tab_to_activate {
+                        self.active_tab_index = activate_idx;
+                        for (i, s) in self.sessions.iter_mut().enumerate() {
+                            s.is_focused = i == activate_idx;
+                        }
+                    }
+
                     if let Some(close_idx) = tab_to_close {
-                        let closed_id = self.tabs[close_idx].id;
-                        self.tabs.remove(close_idx);
-                        if self.active_tab_index >= self.tabs.len() {
-                            self.active_tab_index = self.tabs.len().saturating_sub(1);
+                        let closed_id = self.sessions[close_idx].id.clone();
+                        self.sessions.remove(close_idx);
+                        if self.active_tab_index >= self.sessions.len() {
+                            self.active_tab_index = self.sessions.len().saturating_sub(1);
+                        }
+                        if self.sessions.is_empty() {
+                            widget::set_terminal_focus_web(false);
                         }
                         if let Some(c) = client {
-                            c.send(crate::net::protocol::ControlMessage::new(
-                                crate::net::protocol::Domain::Terminal,
+                            c.send(ControlMessage::new(
+                                Domain::Terminal,
                                 "close",
-                                serde_json::to_value(crate::net::protocol::TerminalCloseRequest {
-                                    terminal_id: closed_id,
-                                })
-                                .unwrap_or_default(),
+                                serde_json::to_value(TerminalCloseRequest { id: closed_id })
+                                    .unwrap_or_default(),
                             ));
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                self.local_pty_manager.close_session(&closed_id);
+                            }
                         }
                     }
                 });
             });
 
-        let query = self.search_query.trim().to_lowercase();
-        let tab_idx = self.active_tab_index.min(self.tabs.len().saturating_sub(1));
-        let tab = &mut self.tabs[tab_idx];
+        if self.sessions.is_empty() {
+            return;
+        }
 
-        // Barra de ferramentas do terminal ativo (Play/Stop, Clear, Auto-scroll)
-        Frame::new()
-            .fill(Color32::from_gray(28))
-            .inner_margin(Margin {
-                left: 6,
-                right: 6,
-                top: 2,
-                bottom: 2,
-            })
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if tab.is_running {
-                        if re_icon_button(ui, &re_ui::icons::PAUSE, "Interromper processo (SIGINT)")
-                            .clicked()
-                        {
-                            tab.is_running = false;
-                            tab.output_lines
-                                .push("[WARN] [sys]: Processo interrompido pelo usuário.".into());
-                        }
-                    } else {
-                        if re_icon_button(ui, &re_ui::icons::PLAY, "Reiniciar processo").clicked() {
-                            tab.is_running = true;
-                            tab.output_lines
-                                .push("[INFO] [sys]: Processo reiniciado.".into());
-                        }
-                    }
+        let tab_idx = self
+            .active_tab_index
+            .min(self.sessions.len().saturating_sub(1));
+        let session = &mut self.sessions[tab_idx];
 
-                    ui.separator();
+        // Renderiza o emulador VT100 interativo ocupando todo o espaço restante do painel
+        let widget_out = show_terminal_widget(ui, session);
 
-                    if crate::panels::components::re_icon_text_button(
-                        ui,
-                        &re_ui::icons::TRASH,
-                        "Limpar",
-                    )
-                    .clicked()
-                    {
-                        tab.output_lines.clear();
-                    }
+        if let Some((cols, rows)) = widget_out.resized {
+            if let Some(c) = client {
+                c.send(ControlMessage::new(
+                    Domain::Terminal,
+                    "resize",
+                    serde_json::to_value(TerminalResizeMessage {
+                        id: session.id.clone(),
+                        cols,
+                        rows,
+                    })
+                    .unwrap_or_default(),
+                ));
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let _ = self
+                        .local_pty_manager
+                        .resize_session(&session.id, cols, rows);
+                }
+            }
+        }
 
-                    ui.checkbox(&mut tab.auto_scroll, "Auto-scroll");
-                });
-            });
-
-        // Área de exibição de log/saída do terminal (Monospaced output)
-        Frame::new()
-            .fill(Color32::from_gray(16))
-            .inner_margin(Margin {
-                left: 6,
-                right: 6,
-                top: 4,
-                bottom: 4,
-            })
-            .show(ui, |ui| {
-                let scroll = egui::ScrollArea::both()
-                    .id_salt(format!("terminal_scroll_{}", tab.id))
-                    .auto_shrink([false, false])
-                    .min_scrolled_height(0.0)
-                    .stick_to_bottom(tab.auto_scroll);
-
-                scroll.show(ui, |ui| {
-                    let lines: Vec<&String> = tab
-                        .output_lines
-                        .iter()
-                        .filter(|line| query.is_empty() || line.to_lowercase().contains(&query))
-                        .collect();
-
-                    if lines.is_empty() {
-                        ui.label(
-                            RichText::new("Nenhuma saída para exibir...")
-                                .italics()
-                                .color(Color32::DARK_GRAY),
-                        );
-                    } else {
-                        for line in lines {
-                            render_log_line(ui, line);
-                        }
-                    }
-                });
-            });
-
-        // Linha de entrada de comando (Prompt)
-        Frame::new()
-            .fill(Color32::from_gray(24))
-            .inner_margin(Margin {
-                left: 6,
-                right: 6,
-                top: 3,
-                bottom: 3,
-            })
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("$")
-                            .strong()
-                            .color(Color32::from_rgb(50, 200, 100)),
-                    );
-
-                    let available_for_text =
-                        (ui.available_width() - 60.0 - ui.spacing().item_spacing.x).max(30.0);
-
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.command_input)
-                            .hint_text("Digite um comando ros2...")
-                            .desired_width(available_for_text),
-                    );
-
-                    if ((response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                        || ui.small_button("Enviar").clicked())
-                        && !self.command_input.trim().is_empty()
-                    {
-                        let cmd = self.command_input.clone();
-                        tab.output_lines.push(format!("$ {}", cmd));
-                        tab.output_lines
-                            .push(format!("[INFO] [exec]: Executando '{}'...", cmd));
-                        self.command_input.clear();
-                        if let Some(c) = client {
-                            c.send(crate::net::protocol::ControlMessage::new(
-                                crate::net::protocol::Domain::Terminal,
-                                "data",
-                                serde_json::to_value(crate::net::protocol::TerminalDataMessage {
-                                    terminal_id: tab.id,
-                                    text: cmd,
-                                    is_input: true,
-                                })
-                                .unwrap_or_default(),
-                            ));
-                        }
-                    }
-                });
-            });
+        if !widget_out.input_bytes.is_empty() {
+            if let Some(c) = client {
+                c.send(ControlMessage::new(
+                    Domain::Terminal,
+                    "input",
+                    serde_json::to_value(TerminalInputMessage {
+                        id: session.id.clone(),
+                        data: widget_out.input_bytes,
+                    })
+                    .unwrap_or_default(),
+                ));
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let _ = self
+                        .local_pty_manager
+                        .write_input(&session.id, &widget_out.input_bytes);
+                }
+            }
+        }
     }
 }
 
-/// Formata linhas de log de terminal com destaque por tipo (INFO, WARN, ERROR)
 #[cfg(feature = "viewer")]
-fn render_log_line(ui: &mut Ui, line: &str) {
-    let color = if line.contains("[ERROR]") || line.contains("FATAL") || line.contains("Error") {
-        Color32::from_rgb(240, 80, 80)
-    } else if line.contains("[WARN]") || line.contains("Warning") {
-        Color32::from_rgb(240, 180, 50)
-    } else if line.contains("[INFO]") {
-        Color32::from_rgb(140, 200, 250)
-    } else if line.starts_with('$') {
-        Color32::from_rgb(100, 230, 140)
-    } else {
-        Color32::from_gray(210)
-    };
-
-    ui.label(RichText::new(line).monospace().size(11.0).color(color));
-}
-
-pub fn create_mock_terminals() -> Vec<TerminalTab> {
-    vec![
-        TerminalTab::new(
-            1,
-            "robot_bringup",
-            vec![
-                "[INFO] [launch]: Process set executed: 'robot_state_publisher'",
-                "[INFO] [launch]: Process set executed: 'rplidar_composition'",
-                "[INFO] [rplidar_composition]: RPLidar S2 connected on /dev/ttyUSB0 (115200 baud)",
-                "[INFO] [diff_drive_controller]: Hardware interface initialized successfully.",
-                "[INFO] [diff_drive_controller]: Subscriber created on /cmd_vel",
-                "[INFO] [robot_bringup]: All 4 nodes initialized and running in lifecycle state ACTIVE.",
-            ],
-        ),
-        TerminalTab::new(
-            2,
-            "navigation2",
-            vec![
-                "[INFO] [amcl]: Initializing particle filter with 1000 particles at pose (0, 0, 0).",
-                "[INFO] [planner_server]: GridBased global planner created successfully.",
-                "[INFO] [controller_server]: DWB local planner active.",
-                "[INFO] [bt_navigator]: Behavior Tree loaded from /opt/ros/humble/share/nav2_bt_navigator/trees/navigate_to_pose.xml",
-                "[WARN] [amcl]: Initial pose particle cloud dispersion high (std_dev = 0.45m).",
-            ],
-        ),
-        TerminalTab::new(
-            3,
-            "rosout",
-            vec![
-                "[INFO] [1727376000.123] [perse_core]: Node perse_core started.",
-                "[INFO] [1727376001.456] [perse_teleop]: Joystick device connected: Sony DualSense",
-                "[INFO] [1727376002.789] [perse_vision]: Camera node initialized: RGB-D 1080p @ 30fps",
-            ],
-        ),
-    ]
+fn current_time_ms() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now() as u64)
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(feature = "viewer")]
@@ -336,13 +453,11 @@ fn render_tab_pill(
     title: &str,
     is_running: bool,
     is_active: bool,
-    can_close: bool,
 ) -> (bool, bool) {
-    let dot = if is_running { "●" } else { "○" };
-    let text = if can_close && is_active {
-        format!("{} {}  ✕", dot, title)
+    let dot_color = if is_running {
+        Color32::from_rgb(80, 210, 120)
     } else {
-        format!("{} {}", dot, title)
+        Color32::from_gray(120)
     };
 
     let bg = if is_active {
@@ -363,30 +478,50 @@ fn render_tab_pill(
         Color32::from_gray(170)
     };
 
-    let btn = egui::Button::new(RichText::new(text).strong().size(11.5).color(text_color))
-        .fill(bg)
-        .stroke(stroke)
-        .corner_radius(4.0);
-
-    let response = ui.add(btn);
     let mut clicked_tab = false;
     let mut clicked_close = false;
 
-    if response.clicked() {
-        if can_close && is_active {
-            if let Some(pos) = response.interact_pointer_pos() {
-                if pos.x > response.rect.max.x - 20.0 {
-                    clicked_close = true;
-                } else {
+    Frame::new()
+        .fill(bg)
+        .stroke(stroke)
+        .corner_radius(4.0)
+        .inner_margin(Margin {
+            left: 6,
+            right: 4,
+            top: 2,
+            bottom: 2,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new("●").size(10.0).color(dot_color));
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(title).strong().size(11.5).color(text_color),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
                     clicked_tab = true;
                 }
-            } else {
-                clicked_tab = true;
-            }
-        } else {
-            clicked_tab = true;
-        }
-    }
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("✕")
+                                .size(10.5)
+                                .color(Color32::from_gray(150)),
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text("Fechar terminal e encerrar processo")
+                    .clicked()
+                {
+                    clicked_close = true;
+                }
+            });
+        });
 
     (clicked_tab, clicked_close)
 }

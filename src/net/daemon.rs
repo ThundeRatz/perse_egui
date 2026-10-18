@@ -20,7 +20,7 @@ use crate::editor::models::MissionSetCollection;
 use crate::net::protocol::*;
 use crate::panels::launchfiles::{LaunchPackage, LaunchStatus};
 use crate::panels::parameters::PackageParams;
-use crate::panels::terminals::TerminalTab;
+use crate::panels::terminals::pty_manager::PtyManager;
 
 const VIEWER_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
@@ -52,7 +52,7 @@ pub struct HostState {
     pub docker_container_name: Arc<Mutex<String>>,
     pub docker_entrypoint: Arc<Mutex<String>>,
     pub mission_collection: Arc<Mutex<MissionSetCollection>>,
-    pub terminal_tabs: Arc<Mutex<Vec<TerminalTab>>>,
+    pub pty_manager: Arc<PtyManager>,
     pub tx_broadcast: broadcast::Sender<ControlMessage>,
 }
 
@@ -111,7 +111,7 @@ impl HostState {
             docker_container_name: Arc::new(Mutex::new(default_cfg.docker_container_name)),
             docker_entrypoint: Arc::new(Mutex::new(default_cfg.docker_entrypoint)),
             mission_collection: Arc::new(Mutex::new(initial_missions)),
-            terminal_tabs: Arc::new(Mutex::new(crate::panels::terminals::create_mock_terminals())),
+            pty_manager: Arc::new(PtyManager::new()),
             tx_broadcast,
         }
     }
@@ -365,11 +365,7 @@ async fn handle_control_socket(mut socket: WebSocket, host_state: HostState) {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
-        let tabs = host_state
-            .terminal_tabs
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
+        let sessions = host_state.pty_manager.list_sessions();
 
         vec![
             ControlMessage::new(
@@ -395,8 +391,8 @@ async fn handle_control_socket(mut socket: WebSocket, host_state: HostState) {
             ),
             ControlMessage::new(
                 Domain::Terminal,
-                "list_terminals",
-                serde_json::to_value(TerminalsListResponse { tabs }).unwrap_or_default(),
+                "list_sync",
+                serde_json::to_value(TerminalListSyncResponse { sessions }).unwrap_or_default(),
             ),
         ]
     };
@@ -1070,102 +1066,160 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
         }
         Domain::Terminal => {
             match msg.action.as_str() {
-                "data" => {
-                    if let Ok(data_msg) =
-                        serde_json::from_value::<TerminalDataMessage>(msg.payload.clone())
-                    {
-                        if data_msg.is_input {
-                            // Ecoa comando e gera saída de simulação/resposta no host
-                            let cmd = data_msg.text.clone();
-                            let output_line = format!("[INFO] [host]: Executado '{}'", cmd);
-
-                            if let Ok(mut tabs) = host_state.terminal_tabs.lock() {
-                                if let Some(tab) =
-                                    tabs.iter_mut().find(|t| t.id == data_msg.terminal_id)
-                                {
-                                    tab.output_lines.push(format!("$ {}", cmd));
-                                    tab.output_lines.push(output_line.clone());
-                                }
-                            }
-
-                            // Transmite a linha de log resultante para todos os clientes
-                            let notif = ControlMessage::new(
-                                Domain::Terminal,
-                                "data",
-                                serde_json::to_value(TerminalDataMessage {
-                                    terminal_id: data_msg.terminal_id,
-                                    text: format!("$ {}", cmd),
-                                    is_input: false,
-                                })
-                                .unwrap_or_default(),
-                            );
-                            let _ = host_state.tx_broadcast.send(notif);
-
-                            let notif_res = ControlMessage::new(
-                                Domain::Terminal,
-                                "data",
-                                serde_json::to_value(TerminalDataMessage {
-                                    terminal_id: data_msg.terminal_id,
-                                    text: output_line,
-                                    is_input: false,
-                                })
-                                .unwrap_or_default(),
-                            );
-                            let _ = host_state.tx_broadcast.send(notif_res);
-                        }
-                    }
+                "get_list" => {
+                    let sessions = host_state.pty_manager.list_sessions();
+                    let resp = ControlMessage::new(
+                        Domain::Terminal,
+                        "list_sync",
+                        serde_json::to_value(TerminalListSyncResponse { sessions })
+                            .unwrap_or_default(),
+                    );
+                    let _ = host_state.tx_broadcast.send(resp);
                 }
                 "create" => {
                     if let Ok(req) =
                         serde_json::from_value::<TerminalCreateRequest>(msg.payload.clone())
                     {
-                        let next_id = {
-                            if let Ok(mut tabs) = host_state.terminal_tabs.lock() {
-                                let id = tabs.len() + 1;
-                                tabs.push(TerminalTab::new(
-                                    id,
-                                    req.title,
-                                    vec!["[INFO] Terminal interativo remoto criado."],
-                                ));
-                                id
-                            } else {
-                                1
-                            }
-                        };
-                        let _ = next_id;
-                        let tabs = host_state
-                            .terminal_tabs
+                        let container = host_state
+                            .docker_container_name
                             .lock()
-                            .map(|g| g.clone())
+                            .map(|c| c.clone())
                             .unwrap_or_default();
-                        let notif = ControlMessage::new(
-                            Domain::Terminal,
-                            "list_terminals",
-                            serde_json::to_value(TerminalsListResponse { tabs })
-                                .unwrap_or_default(),
-                        );
-                        let _ = host_state.tx_broadcast.send(notif);
+                        let entrypoint = host_state
+                            .docker_entrypoint
+                            .lock()
+                            .map(|e| e.clone())
+                            .unwrap_or_default();
+                        let ws_path = host_state
+                            .workspace_path
+                            .lock()
+                            .map(|w| w.clone())
+                            .unwrap_or_default();
+
+                        let tx_out = host_state.tx_broadcast.clone();
+                        let tx_exit = host_state.tx_broadcast.clone();
+                        let title_for_exit = req.title.clone();
+                        let target_for_exit = req.target;
+
+                        match host_state.pty_manager.create_session(
+                            req.id.clone(),
+                            req.title.clone(),
+                            req.target,
+                            req.cols,
+                            req.rows,
+                            &container,
+                            &entrypoint,
+                            &ws_path,
+                            move |sid, data| {
+                                let ts = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as u64)
+                                    .unwrap_or(0);
+                                let out_msg = ControlMessage::new(
+                                    Domain::Terminal,
+                                    "output",
+                                    serde_json::to_value(TerminalOutputMessage {
+                                        id: sid,
+                                        data,
+                                        timestamp_ms: ts,
+                                    })
+                                    .unwrap_or_default(),
+                                );
+                                let _ = tx_out.send(out_msg);
+                            },
+                            move |sid| {
+                                let status_msg = ControlMessage::new(
+                                    Domain::Terminal,
+                                    "status",
+                                    serde_json::to_value(TerminalStatusMessage {
+                                        id: sid,
+                                        title: title_for_exit.clone(),
+                                        target: target_for_exit,
+                                        is_running: false,
+                                    })
+                                    .unwrap_or_default(),
+                                );
+                                let _ = tx_exit.send(status_msg);
+                            },
+                        ) {
+                            Ok(()) => {
+                                let status_msg = ControlMessage::new(
+                                    Domain::Terminal,
+                                    "status",
+                                    serde_json::to_value(TerminalStatusMessage {
+                                        id: req.id,
+                                        title: req.title,
+                                        target: req.target,
+                                        is_running: true,
+                                    })
+                                    .unwrap_or_default(),
+                                );
+                                let _ = host_state.tx_broadcast.send(status_msg);
+                            }
+                            Err(err) => {
+                                re_log::error!("Daemon: Erro ao criar sessão PTY: {}", err);
+                                let err_bytes = format!(
+                                    "\r\n\x1b[31m[Daemon: Falha ao criar PTY: {}]\x1b[0m\r\n",
+                                    err
+                                )
+                                .into_bytes();
+                                let out_msg = ControlMessage::new(
+                                    Domain::Terminal,
+                                    "output",
+                                    serde_json::to_value(TerminalOutputMessage {
+                                        id: req.id.clone(),
+                                        data: err_bytes,
+                                        timestamp_ms: 0,
+                                    })
+                                    .unwrap_or_default(),
+                                );
+                                let _ = host_state.tx_broadcast.send(out_msg);
+                                let status_msg = ControlMessage::new(
+                                    Domain::Terminal,
+                                    "status",
+                                    serde_json::to_value(TerminalStatusMessage {
+                                        id: req.id,
+                                        title: req.title,
+                                        target: req.target,
+                                        is_running: false,
+                                    })
+                                    .unwrap_or_default(),
+                                );
+                                let _ = host_state.tx_broadcast.send(status_msg);
+                            }
+                        }
+                    }
+                }
+                "input" => {
+                    if let Ok(req) =
+                        serde_json::from_value::<TerminalInputMessage>(msg.payload.clone())
+                    {
+                        if let Err(e) = host_state.pty_manager.write_input(&req.id, &req.data) {
+                            re_log::warn!("Daemon: Erro ao escrever input no PTY '{}': {}", req.id, e);
+                        }
+                    }
+                }
+                "resize" => {
+                    if let Ok(req) =
+                        serde_json::from_value::<TerminalResizeMessage>(msg.payload.clone())
+                    {
+                        let _ = host_state
+                            .pty_manager
+                            .resize_session(&req.id, req.cols, req.rows);
                     }
                 }
                 "close" => {
                     if let Ok(req) =
                         serde_json::from_value::<TerminalCloseRequest>(msg.payload.clone())
                     {
-                        if let Ok(mut tabs) = host_state.terminal_tabs.lock() {
-                            tabs.retain(|t| t.id != req.terminal_id);
-                        }
-                        let tabs = host_state
-                            .terminal_tabs
-                            .lock()
-                            .map(|g| g.clone())
-                            .unwrap_or_default();
-                        let notif = ControlMessage::new(
+                        host_state.pty_manager.close_session(&req.id);
+                        let closed_notif = ControlMessage::new(
                             Domain::Terminal,
-                            "list_terminals",
-                            serde_json::to_value(TerminalsListResponse { tabs })
+                            "closed",
+                            serde_json::to_value(TerminalCloseRequest { id: req.id })
                                 .unwrap_or_default(),
                         );
-                        let _ = host_state.tx_broadcast.send(notif);
+                        let _ = host_state.tx_broadcast.send(closed_notif);
                     }
                 }
                 _ => {}

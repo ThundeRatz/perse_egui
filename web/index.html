@@ -70,6 +70,44 @@
   </div>
   <canvas id="the_canvas_id" class="hidden"></canvas>
   <div id="error" class="hidden"></div>
+  <script>
+    window.__perse_terminal_focused = false;
+
+    // Quando o terminal estiver em foco, engole atalhos do navegador para que não recarreguem a página
+    // nem fechem a aba ou executem ações padrão (Ctrl+R, Cmd+R, F5, Ctrl+W, Ctrl+F, Ctrl+S, Tab, etc.)
+    window.addEventListener("keydown", (e) => {
+      if (window.__perse_terminal_focused) {
+        // Permitir atalhos de ferramentas de desenvolvedor: F12 e Ctrl+Shift+I / J / C
+        if (e.key === "F12" || (e.ctrlKey && e.shiftKey && ["I", "i", "J", "j", "C", "c"].includes(e.key))) {
+          return;
+        }
+
+        // Permitir Ctrl+V / Cmd+V para que o evento nativo de colagem (paste) alcance a aplicação
+        if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+          return;
+        }
+
+        // Se estiver compondo texto (IME) ou for tecla morta (acentos como ~, ^, ´, `),
+        // NUNCA previna o default para que a engine nativa de composição funcione com o text_agent!
+        if (e.isComposing || e.key === "Dead") {
+          return;
+        }
+
+        // Se for caractere imprimível comum (incluindo combinações AltGr), deixe ir para o text_agent do eframe
+        if (!e.metaKey && (!e.ctrlKey || e.altKey) && e.key.length === 1) {
+          return;
+        }
+
+        // Engole atalhos de controle (Ctrl+R, Ctrl+W, Ctrl+F, Ctrl+S, etc.), navegação por Alt (Alt+Left/Right),
+        // F5, Tab e scroll no canvas, impedindo as ações nativas do navegador
+        e.preventDefault();
+      }
+    }, { capture: true });
+
+    window.addEventListener("blur", () => {
+      window.__perse_terminal_focused = false;
+    });
+  </script>
 
   <script type="module">
     const loading = document.getElementById("loading");

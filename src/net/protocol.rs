@@ -72,7 +72,6 @@ pub struct ApplyParametersResponse {
 // --- Payloads do Domínio de Launchfiles ---
 
 use crate::panels::launchfiles::LaunchPackage;
-use crate::panels::terminals::TerminalTab;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LaunchfileInfo {
@@ -85,11 +84,6 @@ pub struct LaunchfileInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchfilesListResponse {
     pub packages: Vec<LaunchPackage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalsListResponse {
-    pub tabs: Vec<TerminalTab>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,28 +118,102 @@ pub struct LaunchfileStatusNotification {
 
 // --- Payloads do Controle de Terminal ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalDataMessage {
-    pub terminal_id: usize,
-    pub text: String,
-    pub is_input: bool,
+/// Alvo de execução do shell no host do daemon
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalTarget {
+    Host,
+    Docker,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Default for TerminalTarget {
+    fn default() -> Self {
+        Self::Host
+    }
+}
+
+fn default_term_cols() -> u16 {
+    80
+}
+
+fn default_term_rows() -> u16 {
+    24
+}
+
+/// Requisição para criar uma nova sessão de terminal PTY no daemon
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TerminalCreateRequest {
+    pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub target: TerminalTarget,
+    #[serde(default = "default_term_cols")]
+    pub cols: u16,
+    #[serde(default = "default_term_rows")]
+    pub rows: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalCloseRequest {
-    pub terminal_id: usize,
+/// Envio de bytes de entrada (stdin / teclas ANSI) do cliente para o PTY do daemon
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalInputMessage {
+    pub id: String,
+    pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalResizeRequest {
-    pub terminal_id: usize,
+/// Envio de bytes de saída (stdout/stderr do PTY) do daemon para os clientes
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalOutputMessage {
+    pub id: String,
+    pub data: Vec<u8>,
+    #[serde(default)]
+    pub timestamp_ms: u64,
+}
+
+/// Redimensionamento da janela do PTY (colunas x linhas)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalResizeMessage {
+    pub id: String,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// Requisição para encerrar e fechar uma sessão de terminal no daemon
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalCloseRequest {
+    pub id: String,
+}
+
+/// Notificação de mudança de status de execução de uma sessão de terminal
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalStatusMessage {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub target: TerminalTarget,
+    pub is_running: bool,
+}
+
+/// Resumo de uma sessão ativa no daemon (incluindo buffer recente para restauração em reconexão)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalSessionSummary {
+    pub id: String,
+    pub title: String,
+    pub is_running: bool,
+    #[serde(default)]
+    pub target: TerminalTarget,
+    #[serde(default = "default_term_cols")]
+    pub cols: u16,
+    #[serde(default = "default_term_rows")]
+    pub rows: u16,
+    #[serde(default)]
+    pub initial_bytes: Vec<u8>,
+}
+
+/// Lista de sessões sincronizadas do daemon para o cliente
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalListSyncResponse {
+    pub sessions: Vec<TerminalSessionSummary>,
 }
 
 // --- Payloads do Domínio de Missão (Mission Editor) ---
@@ -257,5 +325,33 @@ mod tests {
         assert_eq!(decoded.domain, Domain::Mission);
         let resp: MissionDataResponse = serde_json::from_value(decoded.payload).unwrap();
         assert_eq!(resp.collection.active_set_id, coll.active_set_id);
+    }
+
+    #[test]
+    fn test_terminal_messages_roundtrip() {
+        let create_req = TerminalCreateRequest {
+            id: "term_1".to_string(),
+            title: "Docker Shell".to_string(),
+            target: TerminalTarget::Docker,
+            cols: 120,
+            rows: 36,
+        };
+        let msg = ControlMessage::new(
+            Domain::Terminal,
+            "create",
+            serde_json::to_value(&create_req).unwrap(),
+        );
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ControlMessage = serde_json::from_str(&json).unwrap();
+        let decoded_req: TerminalCreateRequest = serde_json::from_value(decoded.payload).unwrap();
+        assert_eq!(decoded_req, create_req);
+
+        let input_msg = TerminalInputMessage {
+            id: "term_1".to_string(),
+            data: vec![0x03, b'l', b's', b'\r'],
+        };
+        let input_json = serde_json::to_string(&input_msg).unwrap();
+        let decoded_input: TerminalInputMessage = serde_json::from_str(&input_json).unwrap();
+        assert_eq!(decoded_input, input_msg);
     }
 }

@@ -516,31 +516,56 @@ impl App for MyApp {
                     _ => {}
                 },
                 crate::net::protocol::Domain::Terminal => {
-                    if msg.action == "list_terminals" {
-                        if let Ok(resp) = serde_json::from_value::<
-                            crate::net::protocol::TerminalsListResponse,
-                        >(msg.payload)
-                        {
-                            self.terminals_panel.tabs = resp.tabs;
-                        }
-                    } else if msg.action == "data" {
-                        if let Ok(data_msg) = serde_json::from_value::<
-                            crate::net::protocol::TerminalDataMessage,
-                        >(msg.payload)
-                        {
-                            if let Some(tab) = self
-                                .terminals_panel
-                                .tabs
-                                .iter_mut()
-                                .find(|t| t.id == data_msg.terminal_id)
+                    let now_ms = (ui.ctx().input(|i| i.time) * 1000.0) as u64;
+                    match msg.action.as_str() {
+                        "list_sync" => {
+                            if let Ok(resp) = serde_json::from_value::<
+                                crate::net::protocol::TerminalListSyncResponse,
+                            >(msg.payload)
                             {
-                                tab.output_lines.push(data_msg.text);
+                                self.terminals_panel.apply_list_sync(resp, now_ms);
+                                ui.ctx().request_repaint();
                             }
                         }
+                        "output" => {
+                            if let Ok(out_msg) = serde_json::from_value::<
+                                crate::net::protocol::TerminalOutputMessage,
+                            >(msg.payload)
+                            {
+                                self.terminals_panel.handle_output(out_msg, now_ms);
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                        "status" => {
+                            if let Ok(status_msg) = serde_json::from_value::<
+                                crate::net::protocol::TerminalStatusMessage,
+                            >(msg.payload)
+                            {
+                                self.terminals_panel.handle_status(status_msg);
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                        "closed" => {
+                            if let Ok(close_msg) = serde_json::from_value::<
+                                crate::net::protocol::TerminalCloseRequest,
+                            >(msg.payload)
+                            {
+                                self.terminals_panel.handle_closed(&close_msg.id);
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
             }
+        }
+
+        // Enquanto o painel de terminais estiver aberto e conectado, solicita repaint periódico leve
+        // para garantir que a saída assíncrona do PTY chegue imediatamente na tela mesmo sem movimento do mouse.
+        if self.config.show_right_sidebar && !self.terminals_panel.sessions.is_empty() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(30));
         }
 
         // Barra superior de ferramentas
@@ -718,14 +743,20 @@ impl App for MyApp {
         let right_max = (ui.available_width() - 40.0).clamp(40.0, 600.0);
 
         // Sidebar Direita (Terminais - Resizable) usando show_collapsible e size_range
+        let mut show_right_sidebar = self.config.show_right_sidebar;
         egui::Panel::right("perse_right_sidebar")
             .resizable(true)
             .default_size(320.0)
             .size_range(40.0..=right_max)
             .frame(egui::Frame::new().fill(panel_bg).inner_margin(0.0))
-            .show_collapsible(ui, &mut self.config.show_right_sidebar, |ui| {
-                self.terminals_panel.ui(ui, Some(&self.control_client));
+            .show_collapsible(ui, &mut show_right_sidebar, |ui| {
+                self.terminals_panel.ui(
+                    ui,
+                    Some(&self.control_client),
+                    Some(&self.config),
+                );
             });
+        self.config.show_right_sidebar = show_right_sidebar;
 
         // Modal de configurações
         let old_ws = self.config.workspace_path.clone();
