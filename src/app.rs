@@ -169,6 +169,7 @@ impl MyApp {
         mission_editor.file_path = config.mission_file_path.clone();
 
         let mut parameters_panel = ParametersPanel::default();
+        let mut launchfiles_panel = LaunchfilesPanel::default();
         #[cfg(not(target_arch = "wasm32"))]
         {
             let scanned = crate::panels::parameters::workspace::scan_workspace_packages(
@@ -181,6 +182,19 @@ impl MyApp {
                     config.workspace_path
                 );
                 parameters_panel.packages = scanned;
+            }
+
+            let scanned_launches =
+                crate::panels::launchfiles::workspace::scan_workspace_launchfiles(
+                    &config.workspace_path,
+                );
+            if !scanned_launches.is_empty() {
+                re_log::info!(
+                    "Carregados {} pacotes com launchfiles da workspace ROS '{}'",
+                    scanned_launches.len(),
+                    config.workspace_path
+                );
+                launchfiles_panel.packages = scanned_launches;
             }
         }
 
@@ -195,7 +209,7 @@ impl MyApp {
             config,
             state: AppState::default(),
             parameters_panel,
-            launchfiles_panel: LaunchfilesPanel::default(),
+            launchfiles_panel,
             terminals_panel: TerminalsPanel::default(),
             settings_panel: SettingsPanel::default(),
             control_client,
@@ -695,6 +709,10 @@ impl App for MyApp {
                 // Subpainel inferior: Launchfiles
                 self.launchfiles_panel
                     .ui(ui, &mut self.state, Some(&self.control_client));
+                if self.launchfiles_panel.request_open_settings {
+                    self.launchfiles_panel.request_open_settings = false;
+                    self.settings_panel.open = true;
+                }
             });
 
         let right_max = (ui.available_width() - 40.0).clamp(40.0, 600.0);
@@ -720,6 +738,14 @@ impl App for MyApp {
                 );
                 if !scanned.is_empty() {
                     self.parameters_panel.packages = scanned;
+                }
+
+                let scanned_launches =
+                    crate::panels::launchfiles::workspace::scan_workspace_launchfiles(
+                        &self.config.workspace_path,
+                    );
+                if !scanned_launches.is_empty() {
+                    self.launchfiles_panel.packages = scanned_launches;
                 }
             }
             self.control_client.send(crate::net::protocol::ControlMessage::new(

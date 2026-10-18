@@ -97,6 +97,8 @@ impl LaunchPackage {
     }
 }
 
+pub mod workspace;
+
 /// Painel de Launchfiles
 #[cfg(feature = "viewer")]
 #[derive(Debug)]
@@ -105,16 +107,18 @@ pub struct LaunchfilesPanel {
     pub search_active: bool,
     pub search_query: String,
     pub first_frame: bool,
+    pub request_open_settings: bool,
 }
 
 #[cfg(feature = "viewer")]
 impl Default for LaunchfilesPanel {
     fn default() -> Self {
         Self {
-            packages: create_mock_launchfiles(),
+            packages: Vec::new(),
             search_active: false,
             search_query: String::new(),
             first_frame: true,
+            request_open_settings: false,
         }
     }
 }
@@ -151,6 +155,34 @@ impl LaunchfilesPanel {
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if self.packages.is_empty() {
+                            ui.add_space(16.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("Nenhum launch file encontrado.")
+                                        .strong()
+                                        .color(Color32::from_gray(210)),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Configure o caminho da workspace ROS nas configurações para carregar os launch files dos pacotes.")
+                                        .color(Color32::from_gray(160)),
+                                );
+                                ui.add_space(12.0);
+                                if crate::panels::components::re_icon_text_button(
+                                    ui,
+                                    &re_ui::icons::SETTINGS,
+                                    "Abrir Configurações",
+                                )
+                                .on_hover_text("Abrir janela de Configurações para definir o caminho da workspace")
+                                .clicked()
+                                {
+                                    self.request_open_settings = true;
+                                }
+                            });
+                            return;
+                        }
+
                         let query = self.search_query.trim().to_lowercase();
 
                         let visible_packages: Vec<&mut LaunchPackage> = self
@@ -162,7 +194,7 @@ impl LaunchfilesPanel {
                         if visible_packages.is_empty() {
                             ui.add_space(8.0);
                             ui.label(
-                                RichText::new("Nenhum launch file encontrado")
+                                RichText::new("Nenhum launch file corresponde à busca")
                                     .italics()
                                     .color(Color32::GRAY),
                             );

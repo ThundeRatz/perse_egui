@@ -85,12 +85,23 @@ impl HostState {
             Vec::new()
         };
 
+        let scanned_launches =
+            crate::panels::launchfiles::workspace::scan_workspace_launchfiles(&default_ws);
+        let initial_launches = if !scanned_launches.is_empty() {
+            re_log::info!(
+                "Daemon: Carregados {} pacotes com launchfiles da workspace '{}'",
+                scanned_launches.len(),
+                default_ws
+            );
+            scanned_launches
+        } else {
+            Vec::new()
+        };
+
         Self {
             packages: Arc::new(Mutex::new(initial_packages)),
             workspace_path: Arc::new(Mutex::new(default_ws)),
-            launch_packages: Arc::new(Mutex::new(
-                crate::panels::launchfiles::create_mock_launchfiles(),
-            )),
+            launch_packages: Arc::new(Mutex::new(initial_launches)),
             mission_collection: Arc::new(Mutex::new(initial_missions)),
             terminal_tabs: Arc::new(Mutex::new(crate::panels::terminals::create_mock_terminals())),
             tx_broadcast,
@@ -584,6 +595,21 @@ async fn handle_client_message(msg: &ControlMessage, host_state: &HostState) {
                         );
                         let _ = host_state.tx_broadcast.send(resp);
                     }
+
+                    let scanned_launches =
+                        crate::panels::launchfiles::workspace::scan_workspace_launchfiles(ws_val);
+                    if let Ok(mut lpkgs) = host_state.launch_packages.lock() {
+                        *lpkgs = scanned_launches.clone();
+                    }
+                    let launch_resp = ControlMessage::new(
+                        Domain::Launchfiles,
+                        "list_response",
+                        serde_json::to_value(LaunchfilesListResponse {
+                            packages: scanned_launches,
+                        })
+                        .unwrap_or_default(),
+                    );
+                    let _ = host_state.tx_broadcast.send(launch_resp);
                 }
             }
             _ => {}
